@@ -1,0 +1,25 @@
+# Rust
+target/
+
+# Xcode
+*.xcuserdata
+*.xcworkspace/xcuserdata
+*.xcodeproj/project.xcworkspace/xcuserdata
+*.xcodeproj
+*.xcodeproj/xcuserdata
+DerivedData/
+build/
+
+# macOS
+.DS_Store
+*.swp
+*~
+
+# IDE
+.idea/
+.vscode/
+*.sublime-*
+
+# Binaries
+Moonshine/Bridge/libmoonshine_ffi.a
+Moonshine/Bridge/*.dylib

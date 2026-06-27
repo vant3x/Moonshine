@@ -1,0 +1,17 @@
+[package]
+name = "moonshine-ffi"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+
+[lib]
+crate-type = ["staticlib"]
+
+[build-dependencies]
+swift-bridge-build = "0.1"
+
+[dependencies]
+moonshine-core = { path = "../moonshine-core" }
+swift-bridge = "0.1"
+serde_json.workspace = true
