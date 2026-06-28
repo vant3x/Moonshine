@@ -31,6 +31,9 @@ public func install_wine<GenericToRustStr: ToRustStr>(_ url: GenericToRustStr) -
 public func is_wine_installed() -> Bool {
     __swift_bridge__$is_wine_installed()
 }
+public func last_install_error() -> Bool {
+    __swift_bridge__$last_install_error()
+}
 public enum SwiftWindowsVersion {
     case Win10
     case Win11
@@ -373,6 +376,12 @@ extension RustPrefixRef {
 
     public func list_executables() -> RustVec<RustString> {
         RustVec(ptr: __swift_bridge__$RustPrefix$list_executables(ptr))
+    }
+
+    public func run_program<GenericToRustStr: ToRustStr>(_ program_path: GenericToRustStr) -> Bool {
+        return program_path.toRustStr({ program_pathAsRustStr in
+            __swift_bridge__$RustPrefix$run_program(ptr, program_pathAsRustStr)
+        })
     }
 }
 extension RustPrefix: Vectorizable {

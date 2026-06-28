@@ -1,34 +1,47 @@
 use crate::error::{MoonshineError, Result};
 use std::fs;
 use std::path::PathBuf;
+use std::process::Command;
 
 pub fn download_file(url: &str, dest: &PathBuf) -> Result<PathBuf> {
-    let client = reqwest::blocking::Client::builder()
-        .user_agent("Moonshine/0.1")
-        .build()
-        .map_err(|e| MoonshineError::DownloadFailed(e.to_string()))?;
-
-    let response = client
-        .get(url)
-        .send()
-        .map_err(|e| MoonshineError::DownloadFailed(e.to_string()))?;
-
-    if !response.status().is_success() {
-        return Err(MoonshineError::DownloadFailed(format!(
-            "HTTP {}",
-            response.status()
-        )));
-    }
-
-    let bytes = response
-        .bytes()
-        .map_err(|e| MoonshineError::DownloadFailed(e.to_string()))?;
+    eprintln!("[Moonshine] Downloading: {} -> {}", url, dest.display());
 
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
     }
 
-    fs::write(dest, &bytes)?;
+    // Use system curl — handles TLS, redirects (302), and certificates correctly
+    let output = Command::new("/usr/bin/curl")
+        .arg("-L")               // follow redirects
+        .arg("-f")               // fail on HTTP errors
+        .arg("--connect-timeout")
+        .arg("30")
+        .arg("--max-time")
+        .arg("0")                // no overall timeout for large files
+        .arg("--retry")
+        .arg("3")
+        .arg("--retry-delay")
+        .arg("2")
+        .arg("-o")
+        .arg(dest)
+        .arg(url)
+        .output()
+        .map_err(|e| MoonshineError::DownloadFailed(format!("Failed to run curl: {}", e)))?;
+
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).to_string();
+        eprintln!("[Moonshine] curl stderr: {}", stderr);
+        eprintln!("[Moonshine] curl stdout: {}", stdout);
+        return Err(MoonshineError::DownloadFailed(format!(
+            "curl failed (exit {}): {}",
+            output.status.code().unwrap_or(-1),
+            stderr.trim()
+        )));
+    }
+
+    let file_size = fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
+    eprintln!("[Moonshine] Downloaded {} bytes to {}", file_size, dest.display());
     Ok(dest.clone())
 }
 

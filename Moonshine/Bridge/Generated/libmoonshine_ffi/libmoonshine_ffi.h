@@ -69,6 +69,7 @@ void __swift_bridge__$RustPrefix$set_dxvk_hud(void* self, bool enabled);
 bool __swift_bridge__$RustPrefix$save(void* self);
 bool __swift_bridge__$RustPrefix$delete_prefix(void* self);
 void* __swift_bridge__$RustPrefix$list_executables(void* self);
+bool __swift_bridge__$RustPrefix$run_program(void* self, struct RustStr program_path);
 void* __swift_bridge__$detect_wine(void);
 void* __swift_bridge__$wine_version(void);
 void* __swift_bridge__$get_base_dir(void);
@@ -78,5 +79,6 @@ void* __swift_bridge__$get_wine_dir(void);
 void* __swift_bridge__$get_gptk_dir(void);
 bool __swift_bridge__$install_wine(struct RustStr url);
 bool __swift_bridge__$is_wine_installed(void);
+bool __swift_bridge__$last_install_error(void);
 
 

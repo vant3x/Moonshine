@@ -1,4 +1,4 @@
-use crate::config::{BottleConfig, SyncMode};
+use crate::config::{BottleConfig, GraphicsBackend, SyncMode};
 use crate::error::{Result, MoonshineError};
 use crate::prefix::Prefix;
 use std::collections::HashMap;

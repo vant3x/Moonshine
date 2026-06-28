@@ -15,7 +15,6 @@ tracing.workspace = true
 walkdir.workspace = true
 uuid.workspace = true
 chrono.workspace = true
-reqwest = { workspace = true, features = ["blocking"] }
 tar.workspace = true
 flate2.workspace = true
 zip.workspace = true

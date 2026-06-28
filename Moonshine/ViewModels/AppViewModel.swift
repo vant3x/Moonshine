@@ -1,6 +1,7 @@
 import Combine
 import Foundation
 import SwiftUI
+import Darwin
 
 struct PrefixData: Identifiable {
     let id: String
@@ -48,14 +49,33 @@ class AppViewModel: ObservableObject {
         isDownloading = true
         downloadStatus = "Downloading Wine..."
         Task.detached {
+            // Capture stderr output from Rust
+            let pipe = Pipe()
+            let oldStderr = dup(STDERR_FILENO)
+            dup2(pipe.fileHandleForWriting.fileDescriptor, STDERR_FILENO)
+            
             let success = install_wine(url)
+            
+            // Restore stderr
+            dup2(oldStderr, STDERR_FILENO)
+            close(oldStderr)
+            
+            // Read captured stderr
+            pipe.fileHandleForWriting.closeFile()
+            let errorData = pipe.fileHandleForReading.readDataToEndOfFile()
+            let errorOutput = String(data: errorData, encoding: .utf8) ?? ""
+            
             await MainActor.run {
                 self.isDownloading = false
                 if success {
                     self.downloadStatus = "Wine installed successfully!"
                     self.detectRuntime()
                 } else {
-                    self.downloadStatus = "Download failed. Check the URL and try again."
+                    // Extract meaningful error from Rust stderr
+                    let lines = errorOutput.components(separatedBy: "\n")
+                    let errorLine = lines.last { $0.contains("[Moonshine]") } ?? "Unknown error"
+                    self.downloadStatus = "Download failed: \(errorLine)"
+                    print("[Moonshine-Swift] Error output:\n\(errorOutput)")
                 }
             }
         }
@@ -84,9 +104,68 @@ class AppViewModel: ObservableObject {
     }
 
     func createPrefix(name: String, windowsVersion: String, graphicsBackend: String) {
+        // RustPrefix IS a RustPrefixRefMut, so setters are available directly
         let prefix = RustPrefix(name)
+
+        prefix.set_windows_version(windowsVersion == "win10" ? .Win10 : .Win11)
+        prefix.set_graphics_backend(graphicsBackend == "d3dmetal" ? .D3DMetal : .DXVK)
+
         _ = prefix.save()
         loadPrefixes()
+    }
+
+    /// Returns a mutable reference to the prefix with the given id,
+    /// using index-based getMut to get a RustPrefixRefMut (which has setters).
+    private func findPrefixMut(id: String) -> RustPrefixRefMut? {
+        let vec = list_all_prefixes()
+        for i in 0..<vec.len() {
+            if let rp = vec.getMut(index: UInt(i)) {
+                if rp.get_id().toString() == id {
+                    return rp
+                }
+            }
+        }
+        return nil
+    }
+
+    func updatePrefixSettings(
+        id: String,
+        windowsVersion: String,
+        graphicsBackend: String,
+        syncMode: String,
+        metalFx: Bool,
+        dxvkHud: Bool
+    ) {
+        guard let rp = findPrefixMut(id: id) else { return }
+
+        rp.set_windows_version(windowsVersion == "win10" ? .Win10 : .Win11)
+        rp.set_graphics_backend(graphicsBackend == "d3dmetal" ? .D3DMetal : .DXVK)
+
+        switch syncMode {
+        case "esync": rp.set_sync_mode(.ESync)
+        case "msync": rp.set_sync_mode(.MSync)
+        default:      rp.set_sync_mode(.Default)
+        }
+
+        rp.set_metal_fx(metalFx)
+        rp.set_dxvk_hud(dxvkHud)
+        _ = rp.save()
+        loadPrefixes()
+    }
+
+    func runProgram(prefixId: String, programPath: String) {
+        // run_program is on RustPrefixRef (read-only), vec.get(index:) is enough
+        let vec = list_all_prefixes()
+        for i in 0..<vec.len() {
+            if let rp = vec.get(index: UInt(i)) {
+                if rp.get_id().toString() == prefixId {
+                    Task.detached {
+                        _ = rp.run_program(programPath)
+                    }
+                    break
+                }
+            }
+        }
     }
 
     func deletePrefix(id: String) {

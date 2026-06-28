@@ -1,25 +1,24 @@
 # Rust
 target/
 
-# Xcode
-*.xcuserdata
-*.xcworkspace/xcuserdata
-*.xcodeproj/project.xcworkspace/xcuserdata
-*.xcodeproj
-*.xcodeproj/xcuserdata
-DerivedData/
-build/
-
-# macOS
+# Xcode & macOS Project Settings
+# Track the project file layout and workspace configuration, but ignore user settings
+**/xcuserdata/
+**/DerivedData/
+**/build/
 .DS_Store
 *.swp
 *~
 
-# IDE
+# IDE Settings
 .idea/
 .vscode/
 *.sublime-*
 
-# Binaries
+# External Libraries & Binaries (Prevent committing heavy binary files)
+Libraries/wine/
+Libraries/dxvk/
+Libraries/d3dmetal/
 Moonshine/Bridge/libmoonshine_ffi.a
 Moonshine/Bridge/*.dylib
+

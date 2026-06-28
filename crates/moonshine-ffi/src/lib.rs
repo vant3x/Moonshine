@@ -1,4 +1,7 @@
 use moonshine_core::{GraphicsBackend, Prefix, SyncMode, WindowsVersion};
+use std::sync::atomic::{AtomicBool, Ordering};
+
+static LAST_INSTALL_FAILED: AtomicBool = AtomicBool::new(false);
 
 #[swift_bridge::bridge]
 mod ffi {
@@ -38,6 +41,7 @@ mod ffi {
         fn save(&self) -> bool;
         fn delete_prefix(&self) -> bool;
         fn list_executables(&self) -> Vec<String>;
+        fn run_program(&self, program_path: &str) -> bool;
     }
 
     extern "Rust" {
@@ -50,6 +54,7 @@ mod ffi {
         fn get_gptk_dir() -> String;
         fn install_wine(url: &str) -> bool;
         fn is_wine_installed() -> bool;
+        fn last_install_error() -> bool;
     }
 }
 
@@ -152,6 +157,15 @@ impl RustPrefix {
             .map(|p| p.to_string_lossy().to_string())
             .collect()
     }
+
+    pub fn run_program(&self, program_path: &str) -> bool {
+        if let Ok(runner) = moonshine_core::WineRunner::detect() {
+            let path = std::path::PathBuf::from(program_path);
+            runner.run_program(&self.inner, &path).is_ok()
+        } else {
+            false
+        }
+    }
 }
 
 impl RustPrefix {
@@ -205,7 +219,22 @@ pub fn get_gptk_dir() -> String {
 }
 
 pub fn install_wine(url: &str) -> bool {
-    moonshine_core::runtime::Runtime::download_wine(url).is_ok()
+    match moonshine_core::runtime::Runtime::download_wine(url) {
+        Ok(path) => {
+            eprintln!("[Moonshine] Wine installed successfully at: {}", path.display());
+            LAST_INSTALL_FAILED.store(false, Ordering::Relaxed);
+            true
+        }
+        Err(e) => {
+            eprintln!("[Moonshine] install_wine FAILED: {}", e);
+            LAST_INSTALL_FAILED.store(true, Ordering::Relaxed);
+            false
+        }
+    }
+}
+
+pub fn last_install_error() -> bool {
+    LAST_INSTALL_FAILED.load(Ordering::Relaxed)
 }
 
 pub fn is_wine_installed() -> bool {
