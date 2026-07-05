@@ -117,7 +117,32 @@ impl Runtime {
             .arg(&wine_dir)
             .output();
 
+        // Create `wine` wrapper if missing (GPTK only ships wine64)
         let wine_bin = wine_dir.join("bin/wine64");
+        let wine_wrapper = wine_dir.join("bin/wine");
+        if wine_bin.exists() && !wine_wrapper.exists() {
+            eprintln!("[Moonshine] Creating wine wrapper script...");
+            let wrapper_content = format!(
+                "#!/bin/bash\nexec \"{}\" \"$@\"\n",
+                wine_bin.display()
+            );
+            use std::io::Write;
+            if let Ok(mut f) = fs::File::create(&wine_wrapper) {
+                let _ = f.write_all(wrapper_content.as_bytes());
+            }
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::PermissionsExt;
+                let _ = fs::set_permissions(&wine_wrapper, fs::Permissions::from_mode(0o755));
+            }
+        }
+
+        // Also check wineserver
+        let wineserver_bin = wine_dir.join("bin/wineserver");
+        if wineserver_bin.exists() {
+            eprintln!("[Moonshine] wineserver found at: {}", wineserver_bin.display());
+        }
+
         eprintln!("[Moonshine] Checking wine binary: {}", wine_bin.display());
         if wine_bin.exists() {
             eprintln!("[Moonshine] Wine installed successfully!");
@@ -133,9 +158,7 @@ impl Runtime {
     }
 
     pub fn wine_binary_path() -> Result<PathBuf> {
-        let home = dirs::home_dir().ok_or_else(|| {
-            MoonshineError::Config("Could not determine home directory".to_string())
-        })?;
+        let home = crate::prefix::get_real_home();
         Ok(home.join("Library/Application Support/Moonshine/Libraries/Wine/bin/wine64"))
     }
 }

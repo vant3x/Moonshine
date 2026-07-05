@@ -66,6 +66,62 @@ impl std::fmt::Display for SyncMode {
     }
 }
 
+/// Wine backend configuration per prefix.
+/// - Auto: automatically detect best backend
+/// - WineHQ: use WineHQ (best for 32-bit apps, Steam, winetricks)
+/// - GPTK: use Game Porting Toolkit (best for 64-bit gaming)
+/// - CrossOver: use CrossOver (commercial, full WoW64)
+/// - Custom: use custom wine_path
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum WineBackendConfig {
+    Auto,
+    WineHQ,
+    GPTK,
+    CrossOver,
+    Custom,
+}
+
+impl Default for WineBackendConfig {
+    fn default() -> Self {
+        Self::Auto
+    }
+}
+
+impl std::fmt::Display for WineBackendConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Auto => write!(f, "auto"),
+            Self::WineHQ => write!(f, "winehq"),
+            Self::GPTK => write!(f, "gptk"),
+            Self::CrossOver => write!(f, "crossover"),
+            Self::Custom => write!(f, "custom"),
+        }
+    }
+}
+
+impl WineBackendConfig {
+    /// Does this backend have working WoW64 (32-bit exe support)?
+    pub fn has_wo64(&self) -> bool {
+        match self {
+            Self::Auto => false, // depends on what's detected
+            Self::WineHQ => true,
+            Self::GPTK => false,
+            Self::CrossOver => true,
+            Self::Custom => false, // depends on custom path
+        }
+    }
+
+    pub fn display_name(&self) -> &str {
+        match self {
+            Self::Auto => "Auto (best available)",
+            Self::WineHQ => "WineHQ (Homebrew)",
+            Self::GPTK => "Game Porting Toolkit",
+            Self::CrossOver => "CrossOver",
+            Self::Custom => "Custom path",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BottleConfig {
     pub name: String,
@@ -77,6 +133,12 @@ pub struct BottleConfig {
     pub dll_overrides: Vec<(String, String)>,
     pub env_vars: Vec<(String, String)>,
     pub created_at: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub wine_path: Option<String>,
+    /// Which Wine backend to use for this prefix.
+    /// Defaults to Auto (detect best available).
+    #[serde(default)]
+    pub wine_backend: WineBackendConfig,
 }
 
 impl Default for BottleConfig {
@@ -91,6 +153,8 @@ impl Default for BottleConfig {
             dll_overrides: Vec::new(),
             env_vars: Vec::new(),
             created_at: chrono::Utc::now().to_rfc3339(),
+            wine_path: None,
+            wine_backend: WineBackendConfig::default(),
         }
     }
 }

@@ -7,6 +7,7 @@ struct NewPrefixView: View {
     @State private var name = ""
     @State private var windowsVersion = "win10"
     @State private var graphicsBackend = "d3dmetal"
+    @State private var isCreating = false
 
     var body: some View {
         VStack(spacing: 20) {
@@ -37,15 +38,21 @@ struct NewPrefixView: View {
                 .keyboardShortcut(.cancelAction)
 
                 Button("Create") {
-                    viewModel.createPrefix(
-                        name: name,
-                        windowsVersion: windowsVersion,
-                        graphicsBackend: graphicsBackend
-                    )
+                    isCreating = true
+                    let prefixName = name
+                    let winVer = windowsVersion
+                    let gfxBackend = graphicsBackend
                     dismiss()
+                    DispatchQueue.main.async {
+                        viewModel.createPrefix(
+                            name: prefixName,                
+                            windowsVersion: winVer,
+                            graphicsBackend: gfxBackend
+                        )
+                    }
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(name.isEmpty)
+                .disabled(name.isEmpty || isCreating)
                 .keyboardShortcut(.defaultAction)
             }
         }

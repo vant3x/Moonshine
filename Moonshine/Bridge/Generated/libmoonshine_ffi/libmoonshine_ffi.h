@@ -40,6 +40,19 @@ __swift_bridge__$Option$SwiftSyncMode __swift_bridge__$Vec_SwiftSyncMode$get_mut
 uintptr_t __swift_bridge__$Vec_SwiftSyncMode$len(void* vec_ptr);
 void* __swift_bridge__$Vec_SwiftSyncMode$as_ptr(void* vec_ptr);
 
+typedef enum __swift_bridge__$SwiftWineBackendTag { __swift_bridge__$SwiftWineBackend$Auto, __swift_bridge__$SwiftWineBackend$WineHQ, __swift_bridge__$SwiftWineBackend$GPTK, __swift_bridge__$SwiftWineBackend$CrossOver, __swift_bridge__$SwiftWineBackend$Custom, } __swift_bridge__$SwiftWineBackendTag;
+typedef struct __swift_bridge__$SwiftWineBackend { __swift_bridge__$SwiftWineBackendTag tag; } __swift_bridge__$SwiftWineBackend;
+typedef struct __swift_bridge__$Option$SwiftWineBackend { bool is_some; __swift_bridge__$SwiftWineBackend val; } __swift_bridge__$Option$SwiftWineBackend;
+
+void* __swift_bridge__$Vec_SwiftWineBackend$new(void);
+void __swift_bridge__$Vec_SwiftWineBackend$drop(void* vec_ptr);
+void __swift_bridge__$Vec_SwiftWineBackend$push(void* vec_ptr, __swift_bridge__$SwiftWineBackend item);
+__swift_bridge__$Option$SwiftWineBackend __swift_bridge__$Vec_SwiftWineBackend$pop(void* vec_ptr);
+__swift_bridge__$Option$SwiftWineBackend __swift_bridge__$Vec_SwiftWineBackend$get(void* vec_ptr, uintptr_t index);
+__swift_bridge__$Option$SwiftWineBackend __swift_bridge__$Vec_SwiftWineBackend$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_SwiftWineBackend$len(void* vec_ptr);
+void* __swift_bridge__$Vec_SwiftWineBackend$as_ptr(void* vec_ptr);
+
 typedef struct RustPrefix RustPrefix;
 void __swift_bridge__$RustPrefix$_free(void* self);
 
@@ -51,6 +64,18 @@ void* __swift_bridge__$Vec_RustPrefix$get(void* vec_ptr, uintptr_t index);
 void* __swift_bridge__$Vec_RustPrefix$get_mut(void* vec_ptr, uintptr_t index);
 uintptr_t __swift_bridge__$Vec_RustPrefix$len(void* vec_ptr);
 void* __swift_bridge__$Vec_RustPrefix$as_ptr(void* vec_ptr);
+
+typedef struct WineBackendInfo WineBackendInfo;
+void __swift_bridge__$WineBackendInfo$_free(void* self);
+
+void* __swift_bridge__$Vec_WineBackendInfo$new(void);
+void __swift_bridge__$Vec_WineBackendInfo$drop(void* vec_ptr);
+void __swift_bridge__$Vec_WineBackendInfo$push(void* vec_ptr, void* item_ptr);
+void* __swift_bridge__$Vec_WineBackendInfo$pop(void* vec_ptr);
+void* __swift_bridge__$Vec_WineBackendInfo$get(void* vec_ptr, uintptr_t index);
+void* __swift_bridge__$Vec_WineBackendInfo$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_WineBackendInfo$len(void* vec_ptr);
+void* __swift_bridge__$Vec_WineBackendInfo$as_ptr(void* vec_ptr);
 
 void* __swift_bridge__$RustPrefix$new_prefix(struct RustStr name);
 void* __swift_bridge__$RustPrefix$get_id(void* self);
@@ -66,10 +91,24 @@ bool __swift_bridge__$RustPrefix$get_metal_fx(void* self);
 void __swift_bridge__$RustPrefix$set_metal_fx(void* self, bool enabled);
 bool __swift_bridge__$RustPrefix$get_dxvk_hud(void* self);
 void __swift_bridge__$RustPrefix$set_dxvk_hud(void* self, bool enabled);
+void* __swift_bridge__$RustPrefix$get_wine_path(void* self);
+void __swift_bridge__$RustPrefix$set_wine_path(void* self, struct RustStr path);
+struct __swift_bridge__$SwiftWineBackend __swift_bridge__$RustPrefix$get_wine_backend(void* self);
+void __swift_bridge__$RustPrefix$set_wine_backend(void* self, struct __swift_bridge__$SwiftWineBackend backend);
 bool __swift_bridge__$RustPrefix$save(void* self);
 bool __swift_bridge__$RustPrefix$delete_prefix(void* self);
+void* __swift_bridge__$RustPrefix$reinit_prefix(void* self);
 void* __swift_bridge__$RustPrefix$list_executables(void* self);
 bool __swift_bridge__$RustPrefix$run_program(void* self, struct RustStr program_path);
+bool __swift_bridge__$RustPrefix$init_prefix(void* self);
+void* __swift_bridge__$RustPrefix$install_steam(void* self);
+void* __swift_bridge__$RustPrefix$run_winetricks(void* self, struct RustStr verb);
+void* __swift_bridge__$RustPrefix$find_steam_exe(void* self);
+bool __swift_bridge__$RustPrefix$launch_steam(void* self);
+void* __swift_bridge__$WineBackendInfo$get_backend_name(void* self);
+void* __swift_bridge__$WineBackendInfo$get_wine_path(void* self);
+void* __swift_bridge__$WineBackendInfo$get_version(void* self);
+bool __swift_bridge__$WineBackendInfo$has_wo64_support(void* self);
 void* __swift_bridge__$detect_wine(void);
 void* __swift_bridge__$wine_version(void);
 void* __swift_bridge__$get_base_dir(void);
@@ -80,5 +119,9 @@ void* __swift_bridge__$get_gptk_dir(void);
 bool __swift_bridge__$install_wine(struct RustStr url);
 bool __swift_bridge__$is_wine_installed(void);
 bool __swift_bridge__$last_install_error(void);
+void* __swift_bridge__$get_available_verbs(void);
+void* __swift_bridge__$detect_all_wine_backends(void);
+void* __swift_bridge__$get_best_wine_backend(void);
+bool __swift_bridge__$has_wine_msvcrt_bug(void);
 
 

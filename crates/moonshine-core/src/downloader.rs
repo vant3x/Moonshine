@@ -80,9 +80,7 @@ pub fn extract_zip(archive: &PathBuf, dest: &PathBuf) -> Result<()> {
 }
 
 pub fn get_libraries_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| {
-        MoonshineError::Config("Could not determine home directory".to_string())
-    })?;
+    let home = crate::prefix::get_real_home();
     let dir = home.join("Library/Application Support/Moonshine/Libraries");
     fs::create_dir_all(&dir)?;
     Ok(dir)

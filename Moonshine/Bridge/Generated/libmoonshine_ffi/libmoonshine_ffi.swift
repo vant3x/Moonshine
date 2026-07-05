@@ -34,6 +34,18 @@ public func is_wine_installed() -> Bool {
 public func last_install_error() -> Bool {
     __swift_bridge__$last_install_error()
 }
+public func get_available_verbs() -> RustVec<RustString> {
+    RustVec(ptr: __swift_bridge__$get_available_verbs())
+}
+public func detect_all_wine_backends() -> RustVec<WineBackendInfo> {
+    RustVec(ptr: __swift_bridge__$detect_all_wine_backends())
+}
+public func get_best_wine_backend() -> Optional<WineBackendInfo> {
+    { let val = __swift_bridge__$get_best_wine_backend(); if val != nil { return WineBackendInfo(ptr: val!) } else { return nil } }()
+}
+public func has_wine_msvcrt_bug() -> Bool {
+    __swift_bridge__$has_wine_msvcrt_bug()
+}
 public enum SwiftWindowsVersion {
     case Win10
     case Win11
@@ -279,6 +291,101 @@ extension SwiftSyncMode: Vectorizable {
         __swift_bridge__$Vec_SwiftSyncMode$len(vecPtr)
     }
 }
+public enum SwiftWineBackend {
+    case Auto
+    case WineHQ
+    case GPTK
+    case CrossOver
+    case Custom
+}
+extension SwiftWineBackend {
+    func intoFfiRepr() -> __swift_bridge__$SwiftWineBackend {
+        switch self {
+            case SwiftWineBackend.Auto:
+                return __swift_bridge__$SwiftWineBackend(tag: __swift_bridge__$SwiftWineBackend$Auto)
+            case SwiftWineBackend.WineHQ:
+                return __swift_bridge__$SwiftWineBackend(tag: __swift_bridge__$SwiftWineBackend$WineHQ)
+            case SwiftWineBackend.GPTK:
+                return __swift_bridge__$SwiftWineBackend(tag: __swift_bridge__$SwiftWineBackend$GPTK)
+            case SwiftWineBackend.CrossOver:
+                return __swift_bridge__$SwiftWineBackend(tag: __swift_bridge__$SwiftWineBackend$CrossOver)
+            case SwiftWineBackend.Custom:
+                return __swift_bridge__$SwiftWineBackend(tag: __swift_bridge__$SwiftWineBackend$Custom)
+        }
+    }
+}
+extension __swift_bridge__$SwiftWineBackend {
+    func intoSwiftRepr() -> SwiftWineBackend {
+        switch self.tag {
+            case __swift_bridge__$SwiftWineBackend$Auto:
+                return SwiftWineBackend.Auto
+            case __swift_bridge__$SwiftWineBackend$WineHQ:
+                return SwiftWineBackend.WineHQ
+            case __swift_bridge__$SwiftWineBackend$GPTK:
+                return SwiftWineBackend.GPTK
+            case __swift_bridge__$SwiftWineBackend$CrossOver:
+                return SwiftWineBackend.CrossOver
+            case __swift_bridge__$SwiftWineBackend$Custom:
+                return SwiftWineBackend.Custom
+            default:
+                fatalError("Unreachable")
+        }
+    }
+}
+extension __swift_bridge__$Option$SwiftWineBackend {
+    @inline(__always)
+    func intoSwiftRepr() -> Optional<SwiftWineBackend> {
+        if self.is_some {
+            return self.val.intoSwiftRepr()
+        } else {
+            return nil
+        }
+    }
+    @inline(__always)
+    static func fromSwiftRepr(_ val: Optional<SwiftWineBackend>) -> __swift_bridge__$Option$SwiftWineBackend {
+        if let v = val {
+            return __swift_bridge__$Option$SwiftWineBackend(is_some: true, val: v.intoFfiRepr())
+        } else {
+            return __swift_bridge__$Option$SwiftWineBackend(is_some: false, val: __swift_bridge__$SwiftWineBackend())
+        }
+    }
+}
+extension SwiftWineBackend: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_SwiftWineBackend$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_SwiftWineBackend$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: Self) {
+        __swift_bridge__$Vec_SwiftWineBackend$push(vecPtr, value.intoFfiRepr())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let maybeEnum = __swift_bridge__$Vec_SwiftWineBackend$pop(vecPtr)
+        return maybeEnum.intoSwiftRepr()
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<Self> {
+        let maybeEnum = __swift_bridge__$Vec_SwiftWineBackend$get(vecPtr, index)
+        return maybeEnum.intoSwiftRepr()
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<Self> {
+        let maybeEnum = __swift_bridge__$Vec_SwiftWineBackend$get_mut(vecPtr, index)
+        return maybeEnum.intoSwiftRepr()
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<Self> {
+        UnsafePointer<Self>(OpaquePointer(__swift_bridge__$Vec_SwiftWineBackend$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_SwiftWineBackend$len(vecPtr)
+    }
+}
 
 public class RustPrefix: RustPrefixRefMut {
     var isOwned: Bool = true
@@ -325,6 +432,16 @@ extension RustPrefixRefMut {
     public func set_dxvk_hud(_ enabled: Bool) {
         __swift_bridge__$RustPrefix$set_dxvk_hud(ptr, enabled)
     }
+
+    public func set_wine_path<GenericToRustStr: ToRustStr>(_ path: GenericToRustStr) {
+        path.toRustStr({ pathAsRustStr in
+            __swift_bridge__$RustPrefix$set_wine_path(ptr, pathAsRustStr)
+        })
+    }
+
+    public func set_wine_backend(_ backend: SwiftWineBackend) {
+        __swift_bridge__$RustPrefix$set_wine_backend(ptr, backend.intoFfiRepr())
+    }
 }
 public class RustPrefixRef {
     var ptr: UnsafeMutableRawPointer
@@ -366,12 +483,24 @@ extension RustPrefixRef {
         __swift_bridge__$RustPrefix$get_dxvk_hud(ptr)
     }
 
+    public func get_wine_path() -> Optional<RustString> {
+        { let val = __swift_bridge__$RustPrefix$get_wine_path(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
+    }
+
+    public func get_wine_backend() -> SwiftWineBackend {
+        __swift_bridge__$RustPrefix$get_wine_backend(ptr).intoSwiftRepr()
+    }
+
     public func save() -> Bool {
         __swift_bridge__$RustPrefix$save(ptr)
     }
 
     public func delete_prefix() -> Bool {
         __swift_bridge__$RustPrefix$delete_prefix(ptr)
+    }
+
+    public func reinit_prefix() -> RustString {
+        RustString(ptr: __swift_bridge__$RustPrefix$reinit_prefix(ptr))
     }
 
     public func list_executables() -> RustVec<RustString> {
@@ -382,6 +511,28 @@ extension RustPrefixRef {
         return program_path.toRustStr({ program_pathAsRustStr in
             __swift_bridge__$RustPrefix$run_program(ptr, program_pathAsRustStr)
         })
+    }
+
+    public func init_prefix() -> Bool {
+        __swift_bridge__$RustPrefix$init_prefix(ptr)
+    }
+
+    public func install_steam() -> RustString {
+        RustString(ptr: __swift_bridge__$RustPrefix$install_steam(ptr))
+    }
+
+    public func run_winetricks<GenericToRustStr: ToRustStr>(_ verb: GenericToRustStr) -> RustString {
+        return verb.toRustStr({ verbAsRustStr in
+            RustString(ptr: __swift_bridge__$RustPrefix$run_winetricks(ptr, verbAsRustStr))
+        })
+    }
+
+    public func find_steam_exe() -> Optional<RustString> {
+        { let val = __swift_bridge__$RustPrefix$find_steam_exe(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
+    }
+
+    public func launch_steam() -> Bool {
+        __swift_bridge__$RustPrefix$launch_steam(ptr)
     }
 }
 extension RustPrefix: Vectorizable {
@@ -430,6 +581,98 @@ extension RustPrefix: Vectorizable {
 
     public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
         __swift_bridge__$Vec_RustPrefix$len(vecPtr)
+    }
+}
+
+
+public class WineBackendInfo: WineBackendInfoRefMut {
+    var isOwned: Bool = true
+
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+
+    deinit {
+        if isOwned {
+            __swift_bridge__$WineBackendInfo$_free(ptr)
+        }
+    }
+}
+public class WineBackendInfoRefMut: WineBackendInfoRef {
+    public override init(ptr: UnsafeMutableRawPointer) {
+        super.init(ptr: ptr)
+    }
+}
+public class WineBackendInfoRef {
+    var ptr: UnsafeMutableRawPointer
+
+    public init(ptr: UnsafeMutableRawPointer) {
+        self.ptr = ptr
+    }
+}
+extension WineBackendInfoRef {
+    public func get_backend_name() -> RustString {
+        RustString(ptr: __swift_bridge__$WineBackendInfo$get_backend_name(ptr))
+    }
+
+    public func get_wine_path() -> RustString {
+        RustString(ptr: __swift_bridge__$WineBackendInfo$get_wine_path(ptr))
+    }
+
+    public func get_version() -> Optional<RustString> {
+        { let val = __swift_bridge__$WineBackendInfo$get_version(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
+    }
+
+    public func has_wo64_support() -> Bool {
+        __swift_bridge__$WineBackendInfo$has_wo64_support(ptr)
+    }
+}
+extension WineBackendInfo: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_WineBackendInfo$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_WineBackendInfo$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: WineBackendInfo) {
+        __swift_bridge__$Vec_WineBackendInfo$push(vecPtr, {value.isOwned = false; return value.ptr;}())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let pointer = __swift_bridge__$Vec_WineBackendInfo$pop(vecPtr)
+        if pointer == nil {
+            return nil
+        } else {
+            return (WineBackendInfo(ptr: pointer!) as! Self)
+        }
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<WineBackendInfoRef> {
+        let pointer = __swift_bridge__$Vec_WineBackendInfo$get(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return WineBackendInfoRef(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<WineBackendInfoRefMut> {
+        let pointer = __swift_bridge__$Vec_WineBackendInfo$get_mut(vecPtr, index)
+        if pointer == nil {
+            return nil
+        } else {
+            return WineBackendInfoRefMut(ptr: pointer!)
+        }
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<WineBackendInfoRef> {
+        UnsafePointer<WineBackendInfoRef>(OpaquePointer(__swift_bridge__$Vec_WineBackendInfo$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_WineBackendInfo$len(vecPtr)
     }
 }
 

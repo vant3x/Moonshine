@@ -103,30 +103,68 @@ impl Prefix {
 
     pub fn list_executables(&self) -> Result<Vec<PathBuf>> {
         let mut exes = Vec::new();
-        let programs_dir = self.programs_dir();
 
-        if !programs_dir.exists() {
-            return Ok(exes);
-        }
+        // Search in BOTH "Program Files" and "Program Files (x86)"
+        let search_dirs = [
+            self.drive_c().join("Program Files"),
+            self.drive_c().join("Program Files (x86)"),
+        ];
 
-        for entry in walkdir::WalkDir::new(&programs_dir)
-            .into_iter()
-            .filter_map(|e| e.ok())
-        {
-            let path = entry.path().to_path_buf();
-            if path.extension().map_or(false, |ext| ext == "exe") {
-                exes.push(path);
+        for programs_dir in &search_dirs {
+            if !programs_dir.exists() {
+                continue;
+            }
+
+            for entry in walkdir::WalkDir::new(programs_dir)
+                .into_iter()
+                .filter_map(|e| e.ok())
+            {
+                let path = entry.path().to_path_buf();
+                if path.extension().map_or(false, |ext| ext == "exe") {
+                    exes.push(path);
+                }
             }
         }
 
+        // Sort by name for consistent ordering
+        exes.sort_by(|a, b| {
+            let name_a = a.file_name().unwrap_or_default().to_string_lossy();
+            let name_b = b.file_name().unwrap_or_default().to_string_lossy();
+            name_a.cmp(&name_b)
+        });
+
         Ok(exes)
+    }
+
+    /// Check if Steam is installed and return its path
+    pub fn find_steam_exe(&self) -> Option<PathBuf> {
+        let candidates = [
+            self.drive_c().join("Program Files (x86)/Steam/steam.exe"),
+            self.drive_c().join("Program Files/Steam/steam.exe"),
+        ];
+        for candidate in &candidates {
+            if candidate.exists() {
+                return Some(candidate.clone());
+            }
+        }
+        None
     }
 }
 
+pub fn get_real_home() -> std::path::PathBuf {
+    let home = dirs::home_dir().unwrap_or_else(|| std::path::PathBuf::from("/Users/".to_string() + &std::env::var("USER").unwrap_or_default()));
+    // If we're in a sandbox container, strip it to get the real home
+    let home_str = home.to_string_lossy().to_string();
+    if let Some(pos) = home_str.find("/Library/Containers/") {
+        if let Some(_end) = home_str[pos..].find("/Data") {
+            return std::path::PathBuf::from(&home_str[..pos]);
+        }
+    }
+    home
+}
+
 pub fn get_base_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| {
-        MoonshineError::Config("Could not determine home directory".to_string())
-    })?;
+    let home = get_real_home();
     let base = home.join("Library/Application Support/Moonshine/Prefixes");
     fs::create_dir_all(&base)?;
     Ok(base)
