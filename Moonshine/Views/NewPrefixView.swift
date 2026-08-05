@@ -45,7 +45,7 @@ struct NewPrefixView: View {
                     dismiss()
                     DispatchQueue.main.async {
                         viewModel.createPrefix(
-                            name: prefixName,                
+                            name: prefixName,                 
                             windowsVersion: winVer,
                             graphicsBackend: gfxBackend
                         )

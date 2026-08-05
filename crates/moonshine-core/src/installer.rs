@@ -173,14 +173,15 @@ pub fn install_steam(prefix: &Prefix) -> Result<String> {
             // Check if it's a 32-bit exe issue
             if stderr.contains("failed to start") || stderr.contains("failed to open") ||
                stderr2.contains("failed to start") || stderr2.contains("failed to open") {
-                return Err(MoonshineError::Config(
+                return Err(MoonshineError::Config(format!(
                     "SteamSetup.exe is a 32-bit application. WoW64 support is incomplete.\n\n\
                      Current backend: {}\n\n\
                      Try one of these:\n\
                      • Install WineHQ:  brew install --cask wine-stable\n\
                      • Install CrossOver: https://www.codeweavers.com\n\
-                     • Or install Steam manually via the .exe after configuring Wine.".to_string()
-                ));
+                     • Or install Steam manually via the .exe after configuring Wine.",
+                    effective_runner.backend()
+                )));
             }
 
             return Err(MoonshineError::WineProcessFailed(output2.status.code()));
@@ -215,6 +216,22 @@ pub fn install_steam(prefix: &Prefix) -> Result<String> {
             Err(MoonshineError::WineProcessFailed(Some(0)))
         }
     }
+}
+
+/// Launch Steam as a detached background process. Returns PID immediately.
+/// Handles XInput/controller env vars automatically via build_env.
+pub fn launch_steam_detached(prefix: &Prefix) -> Result<u32> {
+    let runner = WineRunner::detect_for_config(&prefix.config)?;
+
+    let steam_exe = prefix.find_steam_exe()
+        .ok_or_else(|| MoonshineError::Config(
+            "Steam not found in this prefix. Install it first.".to_string()
+        ))?;
+
+    eprintln!("[Moonshine] Launching Steam (detached): {}", steam_exe.display());
+    eprintln!("[Moonshine] Controller support: {}", prefix.config.enable_hid_controllers);
+
+    runner.launch_program(prefix, &steam_exe)
 }
 
 pub fn check_winetricks_deps() -> Result<()> {

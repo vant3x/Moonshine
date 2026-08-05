@@ -139,7 +139,16 @@ pub struct BottleConfig {
     /// Defaults to Auto (detect best available).
     #[serde(default)]
     pub wine_backend: WineBackendConfig,
+    /// Enable HID controller passthrough for gamepads (GameSir, Xbox, PS5, etc.)
+    /// Sets SDL_JOYSTICK_MFI=0 and enables XInput env vars so Wine can see the controller.
+    #[serde(default = "default_true")]
+    pub enable_hid_controllers: bool,
+    /// Reduce WINEDEBUG output for better performance during gaming.
+    #[serde(default = "default_true")]
+    pub reduce_wine_debug: bool,
 }
+
+fn default_true() -> bool { true }
 
 impl Default for BottleConfig {
     fn default() -> Self {
@@ -155,6 +164,8 @@ impl Default for BottleConfig {
             created_at: chrono::Utc::now().to_rfc3339(),
             wine_path: None,
             wine_backend: WineBackendConfig::default(),
+            enable_hid_controllers: true,
+            reduce_wine_debug: true,
         }
     }
 }

@@ -11,6 +11,8 @@ struct PrefixDetailView: View {
     @State private var metalFx = false
     @State private var dxvkHud = false
     @State private var wineBackend = "auto"
+    @State private var enableHidControllers = true
+    @State private var reduceWineDebug = true
     @State private var isWorking = false
     @State private var workStatus = ""
     @State private var showDeleteConfirm = false
@@ -113,6 +115,54 @@ struct PrefixDetailView: View {
                     .padding(.top, 4)
                 }
 
+                Section("Controllers & Input") {
+                    Toggle(isOn: $enableHidControllers) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label("HID Controller Support", systemImage: "gamecontroller.fill")
+                            Text("Enables GameSir Nova, Xbox, PS5, DualSense and other USB/Bluetooth gamepads via XInput.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    Toggle(isOn: $reduceWineDebug) {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Label("Reduce Wine Debug Logs", systemImage: "speedometer")
+                            Text("Sets WINEDEBUG=-all,+err,+warn for better performance. Disable only when debugging crashes.")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                    }
+                    
+                    Button("Save Controller Settings") {
+                        viewModel.updateControllerSettings(
+                            id: prefix.id,
+                            enableHid: enableHidControllers,
+                            reduceWineDebug: reduceWineDebug
+                        )
+                    }
+                    .buttonStyle(.bordered)
+
+                    if enableHidControllers {
+                        VStack(alignment: .leading, spacing: 4) {
+                            Text("Controller Setup Tips:")
+                                .font(.caption)
+                                .fontWeight(.semibold)
+                                .foregroundColor(.secondary)
+                            Text("1. Connect GameSir Nova in PC/XInput mode (not Nintendo mode)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Text("2. Install xinput via winetricks (Install Dependencies below)")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            Text("3. Launch Steam or game — controller should be detected automatically")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+                        .padding(.top, 4)
+                    }
+                }
+
                 Section("Install Software") {
                     if viewModel.hasWineMsvcrtBug {
                         HStack {
@@ -125,13 +175,25 @@ struct PrefixDetailView: View {
                     }
 
                     HStack {
-                        Button(action: { viewModel.installSteamInBackground(id: prefix.id) }) {
-                            Label("Install Steam", systemImage: "arrow.down.circle")
-                        }
-                        .disabled(viewModel.isInstalling || viewModel.isInitializing)
-
-                        // Show Launch Steam if steam.exe exists
-                        if hasSteamInstalled {
+                        if !hasSteamInstalled {
+                            Button(action: { viewModel.installSteamInBackground(id: prefix.id) }) {
+                                Label("Install Steam", systemImage: "arrow.down.circle")
+                            }
+                            .disabled(viewModel.isInstalling || viewModel.isInitializing)
+                        } else if viewModel.isSteamRunning {
+                            // Steam is running — show Stop button
+                            Button(action: { viewModel.stopSteam() }) {
+                                Label("Stop Steam (PID \(viewModel.activeSteamPid ?? 0))", systemImage: "stop.fill")
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.red)
+                        } else {
+                            // Steam installed but not running
+                            Button(action: { viewModel.installSteamInBackground(id: prefix.id) }) {
+                                Label("Reinstall Steam", systemImage: "arrow.counterclockwise")
+                            }
+                            .disabled(viewModel.isInstalling || viewModel.isInitializing)
+                            
                             Button(action: { viewModel.launchSteam(prefixId: prefix.id) }) {
                                 Label("Launch Steam", systemImage: "play.fill")
                             }
@@ -303,6 +365,8 @@ struct PrefixDetailView: View {
         metalFx = prefix.metalFx
         dxvkHud = prefix.dxvkHud
         wineBackend = prefix.wineBackend
+        enableHidControllers = prefix.enableHidControllers
+        reduceWineDebug = prefix.reduceWineDebug
         // Check if Steam is installed in this prefix
         steamInstalled = prefix.executables.contains { $0.contains("steam.exe") }
     }

@@ -669,9 +669,40 @@ impl WineRunner {
             }
         }
 
+        // --- HID Controller support (GameSir Nova, Xbox, PS5, DualSense, etc.) ---
+        // SDL_JOYSTICK_MFI=0 : disables Apple MFI joystick stack so Wine can own the device
+        // SDL_GAMECONTROLLERCONFIG : can be set per-game if needed
+        // WINE_HIDE_CURSOR=1 : hides cursor while gamepad is active (optional)
+        if config.enable_hid_controllers {
+            env.insert("SDL_JOYSTICK_MFI".to_string(), "0".to_string());
+            env.insert("SDL_GAMECONTROLLERCONFIG_FILE".to_string(), "".to_string());
+            // Tell Wine to use SDL for controller input
+            env.insert("WINE_SDL_JOY_ID_EVENT_DELAY".to_string(), "0".to_string());
+            // Ensure XInput verbs work in winetricks
+            env.insert("WINEDLLOVERRIDES".to_string(), {
+                let existing = env.get("WINEDLLOVERRIDES").cloned().unwrap_or_default();
+                if existing.is_empty() {
+                    "xinput1_4=native,builtin;xinput9_1_0=native,builtin".to_string()
+                } else if !existing.contains("xinput") {
+                    format!("{};xinput1_4=native,builtin;xinput9_1_0=native,builtin", existing)
+                } else {
+                    existing
+                }
+            });
+        }
+
+        // --- Reduce Wine debug noise for better gaming performance ---
+        if config.reduce_wine_debug {
+            // Only suppress noisy channels; keep fixme:ntdll for crash debugging
+            env.entry("WINEDEBUG".to_string())
+                .or_insert_with(|| "-all,+err,+warn".to_string());
+        }
+
         env
     }
 
+    /// Run a Windows program through Wine and **wait** for it to exit.
+    /// Use this for installers where you need to know when they finish.
     pub fn run_program(&self, prefix: &Prefix, program_path: &PathBuf) -> Result<Output> {
         let mut env = Self::build_env(prefix, &prefix.config, &self.backend);
 
@@ -705,6 +736,42 @@ impl WineRunner {
         }
 
         Ok(output)
+    }
+
+    /// Launch a Windows program through Wine as a **detached background process**.
+    /// Returns immediately — does NOT wait for the process to exit.
+    /// Use this for Steam, games, and any long-running Windows apps.
+    /// Returns the child process PID so the caller can track or kill it.
+    pub fn launch_program(&self, prefix: &Prefix, program_path: &PathBuf) -> Result<u32> {
+        let mut env = Self::build_env(prefix, &prefix.config, &self.backend);
+
+        let home = crate::prefix::get_real_home();
+        let homebrew_bin = home.join(".homebrew/bin").to_string_lossy().to_string();
+        let existing_path = std::env::var("PATH").unwrap_or_default();
+        env.insert("PATH".to_string(), format!("/opt/homebrew/bin:/usr/local/bin:{}:{}", homebrew_bin, existing_path));
+
+        let unix_path = program_path.to_string_lossy().to_string();
+
+        eprintln!("[Moonshine] Launching (detached): {}", unix_path);
+        eprintln!("[Moonshine] Wine binary: {}", self.wine_bin.display());
+        eprintln!("[Moonshine] HID controllers: {}", prefix.config.enable_hid_controllers);
+
+        let mut cmd = Command::new(&self.wine_bin);
+        cmd.arg(&unix_path);
+        for (key, value) in &env {
+            cmd.env(key, value);
+        }
+
+        // spawn() returns immediately, child runs independently
+        let child = cmd.spawn().map_err(|e| MoonshineError::Io(e))?;
+        let pid = child.id();
+        eprintln!("[Moonshine] Process launched with PID: {}", pid);
+
+        // Intentionally forget the child handle — process runs independently
+        // macOS will clean up when the process exits
+        std::mem::forget(child);
+
+        Ok(pid)
     }
 
     pub fn init_prefix(&self, prefix: &Prefix) -> Result<Output> {

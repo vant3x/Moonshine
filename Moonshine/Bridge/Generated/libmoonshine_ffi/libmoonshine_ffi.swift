@@ -46,6 +46,9 @@ public func get_best_wine_backend() -> Optional<WineBackendInfo> {
 public func has_wine_msvcrt_bug() -> Bool {
     __swift_bridge__$has_wine_msvcrt_bug()
 }
+public func kill_process(_ pid: UInt32) -> Bool {
+    __swift_bridge__$kill_process(pid)
+}
 public enum SwiftWindowsVersion {
     case Win10
     case Win11
@@ -442,6 +445,14 @@ extension RustPrefixRefMut {
     public func set_wine_backend(_ backend: SwiftWineBackend) {
         __swift_bridge__$RustPrefix$set_wine_backend(ptr, backend.intoFfiRepr())
     }
+
+    public func set_hid_controllers(_ enabled: Bool) {
+        __swift_bridge__$RustPrefix$set_hid_controllers(ptr, enabled)
+    }
+
+    public func set_reduce_wine_debug(_ enabled: Bool) {
+        __swift_bridge__$RustPrefix$set_reduce_wine_debug(ptr, enabled)
+    }
 }
 public class RustPrefixRef {
     var ptr: UnsafeMutableRawPointer
@@ -491,6 +502,14 @@ extension RustPrefixRef {
         __swift_bridge__$RustPrefix$get_wine_backend(ptr).intoSwiftRepr()
     }
 
+    public func get_hid_controllers() -> Bool {
+        __swift_bridge__$RustPrefix$get_hid_controllers(ptr)
+    }
+
+    public func get_reduce_wine_debug() -> Bool {
+        __swift_bridge__$RustPrefix$get_reduce_wine_debug(ptr)
+    }
+
     public func save() -> Bool {
         __swift_bridge__$RustPrefix$save(ptr)
     }
@@ -513,12 +532,22 @@ extension RustPrefixRef {
         })
     }
 
+    public func launch_program<GenericToRustStr: ToRustStr>(_ program_path: GenericToRustStr) -> UInt32 {
+        return program_path.toRustStr({ program_pathAsRustStr in
+            __swift_bridge__$RustPrefix$launch_program(ptr, program_pathAsRustStr)
+        })
+    }
+
     public func init_prefix() -> Bool {
         __swift_bridge__$RustPrefix$init_prefix(ptr)
     }
 
     public func install_steam() -> RustString {
         RustString(ptr: __swift_bridge__$RustPrefix$install_steam(ptr))
+    }
+
+    public func launch_steam() -> UInt32 {
+        __swift_bridge__$RustPrefix$launch_steam(ptr)
     }
 
     public func run_winetricks<GenericToRustStr: ToRustStr>(_ verb: GenericToRustStr) -> RustString {
@@ -529,10 +558,6 @@ extension RustPrefixRef {
 
     public func find_steam_exe() -> Optional<RustString> {
         { let val = __swift_bridge__$RustPrefix$find_steam_exe(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
-    }
-
-    public func launch_steam() -> Bool {
-        __swift_bridge__$RustPrefix$launch_steam(ptr)
     }
 }
 extension RustPrefix: Vectorizable {

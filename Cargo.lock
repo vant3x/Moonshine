@@ -558,6 +558,7 @@ dependencies = [
 name = "moonshine-ffi"
 version = "0.1.0"
 dependencies = [
+ "libc",
  "moonshine-core",
  "serde_json",
  "swift-bridge",

@@ -13,6 +13,8 @@ struct PrefixData: Identifiable {
     let dxvkHud: Bool
     let executables: [String]
     let wineBackend: String
+    let enableHidControllers: Bool
+    let reduceWineDebug: Bool
 }
 
 @MainActor
@@ -35,6 +37,10 @@ class AppViewModel: ObservableObject {
     @Published var backendWo64: Bool = false
     @Published var availableBackends: [(name: String, hasWo64: Bool, version: String)] = []
     @Published var hasWineMsvcrtBug = false
+    /// PID of the running Steam process, nil if not running
+    @Published var activeSteamPid: UInt32? = nil
+    /// PIDs of other running game/program processes
+    @Published var activeProcessPids: [String: UInt32] = [:] // [prefixId_exeName: pid]
 
     let defaultWineURL = "https://github.com/Gcenx/game-porting-toolkit/releases/download/Game-Porting-Toolkit-3.0-3/game-porting-toolkit-3.0-3.tar.xz"
 
@@ -147,7 +153,9 @@ class AppViewModel: ObservableObject {
                     case SwiftWineBackend.CrossOver: return "crossover"
                     case SwiftWineBackend.Custom: return "custom"
                     }
-                }()
+                }(),
+                enableHidControllers: rp.get_hid_controllers(),
+                reduceWineDebug: rp.get_reduce_wine_debug()
             )
         }
     }
@@ -237,18 +245,49 @@ class AppViewModel: ObservableObject {
         loadPrefixes()
     }
 
+    /// Launch a program detached (non-blocking). Tracks PID.
     func runProgram(prefixId: String, programPath: String) {
+        let exeName = URL(fileURLWithPath: programPath).lastPathComponent
         Task.detached {
             let vec = list_all_prefixes()
             for i in 0..<vec.len() {
                 if let rp = vec.get(index: UInt(i)) {
                     if rp.get_id().toString() == prefixId {
-                        _ = rp.run_program(programPath)
+                        let pid = rp.launch_program(programPath)
+                        await MainActor.run {
+                            if pid > 0 {
+                                self.activeProcessPids["\(prefixId)_\(exeName)"] = pid
+                                self.installStatus = "\(exeName) launched (PID \(pid))"
+                            } else {
+                                self.installStatus = "Failed to launch \(exeName)"
+                            }
+                        }
                         break
                     }
                 }
             }
         }
+    }
+
+    /// Check if a process is still running by PID.
+    func isProcessRunning(pid: UInt32) -> Bool {
+        guard pid > 0 else { return false }
+        // kill(pid, 0) returns 0 if process exists, -1 if not
+        return kill(pid_t(pid), 0) == 0
+    }
+
+    /// Kill a tracked process.
+    func killProcess(pid: UInt32) {
+        _ = kill_process(pid)
+        // Clean up tracking
+        activeSteamPid = nil
+        activeProcessPids = activeProcessPids.filter { $0.value != pid }
+    }
+
+    /// Check if Steam is currently running.
+    var isSteamRunning: Bool {
+        guard let pid = activeSteamPid else { return false }
+        return isProcessRunning(pid: pid)
     }
 
     func deletePrefix(id: String) {
@@ -305,15 +344,23 @@ class AppViewModel: ObservableObject {
     }
 
     func launchSteam(prefixId: String) {
+        // Don't launch if Steam is already running
+        if isSteamRunning {
+            installStatus = "Steam is already running (PID \(activeSteamPid ?? 0))"
+            return
+        }
         Task.detached {
             let vec = list_all_prefixes()
             for i in 0..<vec.len() {
                 if let rp = vec.get(index: UInt(i)) {
                     if rp.get_id().toString() == prefixId {
-                        let success = rp.launch_steam()
+                        let pid = rp.launch_steam()
                         await MainActor.run {
-                            if !success {
-                                self.installStatus = "Failed to launch Steam. Try running it manually."
+                            if pid > 0 {
+                                self.activeSteamPid = pid
+                                self.installStatus = "Steam launched! (PID \(pid))"  
+                            } else {
+                                self.installStatus = "Failed to launch Steam. Check logs."
                             }
                         }
                         break
@@ -321,6 +368,12 @@ class AppViewModel: ObservableObject {
                 }
             }
         }
+    }
+
+    func stopSteam() {
+        guard let pid = activeSteamPid else { return }
+        killProcess(pid: pid)
+        installStatus = "Steam stopped."
     }
 
     func runWinetricksInBackground(id: String, verb: String) {
@@ -377,5 +430,14 @@ class AppViewModel: ObservableObject {
         }
         loadPrefixes()
         detectRuntime()
+    }
+
+    /// Update controller settings for a specific prefix only.
+    func updateControllerSettings(id: String, enableHid: Bool, reduceWineDebug: Bool) {
+        guard let rp = findPrefixMut(id: id) else { return }
+        rp.set_hid_controllers(enableHid)
+        rp.set_reduce_wine_debug(reduceWineDebug)
+        _ = rp.save()
+        loadPrefixes()
     }
 }

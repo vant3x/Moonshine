@@ -50,16 +50,21 @@ mod ffi {
         fn set_wine_path(&mut self, path: &str);
         fn get_wine_backend(&self) -> SwiftWineBackend;
         fn set_wine_backend(&mut self, backend: SwiftWineBackend);
+        fn get_hid_controllers(&self) -> bool;
+        fn set_hid_controllers(&mut self, enabled: bool);
+        fn get_reduce_wine_debug(&self) -> bool;
+        fn set_reduce_wine_debug(&mut self, enabled: bool);
         fn save(&self) -> bool;
         fn delete_prefix(&self) -> bool;
         fn reinit_prefix(&self) -> String;
         fn list_executables(&self) -> Vec<String>;
         fn run_program(&self, program_path: &str) -> bool;
+        fn launch_program(&self, program_path: &str) -> u32;
         fn init_prefix(&self) -> bool;
         fn install_steam(&self) -> String;
+        fn launch_steam(&self) -> u32;
         fn run_winetricks(&self, verb: &str) -> String;
         fn find_steam_exe(&self) -> Option<String>;
-        fn launch_steam(&self) -> bool;
     }
 
     extern "Rust" {
@@ -85,6 +90,7 @@ mod ffi {
         fn detect_all_wine_backends() -> Vec<WineBackendInfo>;
         fn get_best_wine_backend() -> Option<WineBackendInfo>;
         fn has_wine_msvcrt_bug() -> bool;
+        fn kill_process(pid: u32) -> bool;
     }
 }
 
@@ -203,6 +209,22 @@ impl RustPrefix {
         };
     }
 
+    pub fn get_hid_controllers(&self) -> bool {
+        self.inner.config.enable_hid_controllers
+    }
+
+    pub fn set_hid_controllers(&mut self, enabled: bool) {
+        self.inner.config.enable_hid_controllers = enabled;
+    }
+
+    pub fn get_reduce_wine_debug(&self) -> bool {
+        self.inner.config.reduce_wine_debug
+    }
+
+    pub fn set_reduce_wine_debug(&mut self, enabled: bool) {
+        self.inner.config.reduce_wine_debug = enabled;
+    }
+
     pub fn save(&self) -> bool {
         self.inner.save_config().is_ok()
     }
@@ -284,6 +306,17 @@ impl RustPrefix {
         }
     }
 
+    /// Launch a program as a detached background process. Returns PID (0 = failed).
+    pub fn launch_program(&self, program_path: &str) -> u32 {
+        if let Ok(runner) = moonshine_core::WineRunner::detect_for_config(&self.inner.config) {
+            let path = std::path::PathBuf::from(program_path);
+            runner.launch_program(&self.inner, &path).unwrap_or(0)
+        } else {
+            eprintln!("[Moonshine] Wine not found for launch_program");
+            0
+        }
+    }
+
     pub fn init_prefix(&self) -> bool {
         match moonshine_core::WineRunner::detect_for_config(&self.inner.config) {
             Ok(runner) => {
@@ -340,27 +373,17 @@ impl RustPrefix {
             .map(|p| p.to_string_lossy().to_string())
     }
 
-    pub fn launch_steam(&self) -> bool {
-        if let Some(steam_exe) = self.inner.find_steam_exe() {
-            if let Ok(runner) = moonshine_core::WineRunner::detect_for_config(&self.inner.config) {
-                eprintln!("[Moonshine] Launching Steam: {}", steam_exe.display());
-                match runner.run_program(&self.inner, &steam_exe) {
-                    Ok(_output) => {
-                        eprintln!("[Moonshine] Steam launched successfully");
-                        true
-                    }
-                    Err(e) => {
-                        eprintln!("[Moonshine] Failed to launch Steam: {}", e);
-                        false
-                    }
-                }
-            } else {
-                eprintln!("[Moonshine] Wine not found, cannot launch Steam");
-                false
+    /// Launch Steam as a detached background process. Returns PID (0 = failed).
+    pub fn launch_steam(&self) -> u32 {
+        match moonshine_core::installer::launch_steam_detached(&self.inner) {
+            Ok(pid) => {
+                eprintln!("[Moonshine] Steam launched with PID: {}", pid);
+                pid
             }
-        } else {
-            eprintln!("[Moonshine] steam.exe not found in prefix");
-            false
+            Err(e) => {
+                eprintln!("[Moonshine] Failed to launch Steam: {}", e);
+                0
+            }
         }
     }
 }
@@ -484,5 +507,22 @@ pub fn has_wine_msvcrt_bug() -> bool {
     match moonshine_core::WineRunner::detect() {
         Ok(runner) => runner.has_known_msvcrt_bug(),
         Err(_) => false,
+    }
+}
+
+/// Kill a process by PID. Use to stop Steam or a game launched via launch_program/launch_steam.
+/// Returns true if the signal was sent successfully.
+pub fn kill_process(pid: u32) -> bool {
+    if pid == 0 {
+        return false;
+    }
+    // Send SIGTERM first (graceful shutdown)
+    let result = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
+    if result == 0 {
+        eprintln!("[Moonshine] Sent SIGTERM to PID {}", pid);
+        true
+    } else {
+        eprintln!("[Moonshine] kill({}) failed: {}", pid, std::io::Error::last_os_error());
+        false
     }
 }
