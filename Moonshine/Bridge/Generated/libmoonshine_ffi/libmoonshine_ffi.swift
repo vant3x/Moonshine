@@ -404,10 +404,10 @@ public class RustPrefix: RustPrefixRefMut {
     }
 }
 extension RustPrefix {
-    public convenience init<GenericToRustStr: ToRustStr>(_ name: GenericToRustStr) {
-        self.init(ptr: name.toRustStr({ nameAsRustStr in
+    public convenience init?<GenericToRustStr: ToRustStr>(_ name: GenericToRustStr) {
+        guard let val = name.toRustStr({ nameAsRustStr in
             __swift_bridge__$RustPrefix$new_prefix(nameAsRustStr)
-        }))
+        }) else { return nil }; self.init(ptr: val)
     }
 }
 public class RustPrefixRefMut: RustPrefixRef {

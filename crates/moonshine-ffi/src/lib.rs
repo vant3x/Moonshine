@@ -32,7 +32,7 @@ mod ffi {
     extern "Rust" {
         type RustPrefix;
         #[swift_bridge(init)]
-        fn new_prefix(name: &str) -> RustPrefix;
+        fn new_prefix(name: &str) -> Option<RustPrefix>;
         fn get_id(&self) -> String;
         fn get_name(&self) -> String;
         fn get_path(&self) -> String;
@@ -99,10 +99,10 @@ pub struct RustPrefix {
 }
 
 impl RustPrefix {
-    pub fn new_prefix(name: &str) -> Self {
-        let base_dir = moonshine_core::get_base_dir().unwrap_or_default();
-        let prefix = Prefix::new(name, &base_dir).expect("Could not create prefix");
-        Self { inner: prefix }
+    pub fn new_prefix(name: &str) -> Option<Self> {
+        let base_dir = moonshine_core::get_base_dir().ok()?;
+        let prefix = Prefix::new(name, &base_dir).ok()?;
+        Some(Self { inner: prefix })
     }
 
     pub fn get_id(&self) -> String {
@@ -238,19 +238,19 @@ impl RustPrefix {
         let prefix_name = self.inner.name.clone();
         let config = self.inner.config.clone();
 
-        eprintln!("[Moonshine] Reinitializing prefix: {} at {}", prefix_name, prefix_path.display());
+        tracing::info!(prefix = %prefix_name, path = %prefix_path.display(), "Reinitializing prefix");
 
         if prefix_path.exists() {
             if let Err(e) = std::fs::remove_dir_all(&prefix_path) {
                 let msg = format!("Failed to delete prefix: {}", e);
-                eprintln!("[Moonshine] {}", msg);
+                tracing::error!(error = %e, "Failed to delete prefix");
                 return msg;
             }
         }
 
         if let Err(e) = std::fs::create_dir_all(&prefix_path) {
             let msg = format!("Failed to create prefix dir: {}", e);
-            eprintln!("[Moonshine] {}", msg);
+            tracing::error!(error = %e, "Failed to create prefix dir");
             return msg;
         }
         let _ = std::fs::create_dir_all(prefix_path.join("drive_c"));
@@ -259,7 +259,7 @@ impl RustPrefix {
 
         if let Err(e) = config.save(&prefix_path) {
             let msg = format!("Failed to save config: {}", e);
-            eprintln!("[Moonshine] {}", msg);
+            tracing::error!(error = %e, "Failed to save config");
             return msg;
         }
 
@@ -312,7 +312,7 @@ impl RustPrefix {
             let path = std::path::PathBuf::from(program_path);
             runner.launch_program(&self.inner, &path).unwrap_or(0)
         } else {
-            eprintln!("[Moonshine] Wine not found for launch_program");
+            tracing::error!("Wine not found for launch_program");
             0
         }
     }
@@ -320,24 +320,24 @@ impl RustPrefix {
     pub fn init_prefix(&self) -> bool {
         match moonshine_core::WineRunner::detect_for_config(&self.inner.config) {
             Ok(runner) => {
-                eprintln!("[Moonshine] Running wineboot for prefix: {}", self.inner.name);
+                tracing::info!(prefix = %self.inner.name, "Running wineboot");
                 match runner.init_prefix(&self.inner) {
                     Ok(output) => {
                         if !output.status.success() {
                             let stderr = String::from_utf8_lossy(&output.stderr);
-                            eprintln!("[Moonshine] wineboot stderr: {}", stderr);
+                            tracing::error!(stderr = %stderr, "wineboot stderr");
                         }
-                        eprintln!("[Moonshine] wineboot completed with status: {}", output.status);
+                        tracing::debug!(status = %output.status, "wineboot completed");
                         true
                     }
                     Err(e) => {
-                        eprintln!("[Moonshine] wineboot failed: {}", e);
+                        tracing::error!(error = %e, "wineboot failed");
                         false
                     }
                 }
             }
             Err(e) => {
-                eprintln!("[Moonshine] Wine not found, cannot init prefix: {}", e);
+                tracing::error!(error = %e, "Wine not found, cannot init prefix");
                 false
             }
         }
@@ -346,12 +346,12 @@ impl RustPrefix {
     pub fn install_steam(&self) -> String {
         match moonshine_core::installer::install_steam(&self.inner) {
             Ok(path) => {
-                eprintln!("[Moonshine] Steam installed: {}", path);
+                tracing::info!(path = %path, "Steam installed");
                 path
             }
             Err(e) => {
                 let msg = format!("Steam install failed: {}", e);
-                eprintln!("[Moonshine] {}", msg);
+                tracing::error!(error = %e, "Steam install failed");
                 msg
             }
         }
@@ -362,7 +362,7 @@ impl RustPrefix {
             Ok(output) => output,
             Err(e) => {
                 let msg = format!("winetricks {} failed: {}", verb, e);
-                eprintln!("[Moonshine] {}", msg);
+                tracing::error!(verb = %verb, error = %e, "winetricks failed");
                 msg
             }
         }
@@ -377,11 +377,11 @@ impl RustPrefix {
     pub fn launch_steam(&self) -> u32 {
         match moonshine_core::installer::launch_steam_detached(&self.inner) {
             Ok(pid) => {
-                eprintln!("[Moonshine] Steam launched with PID: {}", pid);
+                tracing::info!(pid = pid, "Steam launched");
                 pid
             }
             Err(e) => {
-                eprintln!("[Moonshine] Failed to launch Steam: {}", e);
+                tracing::error!(error = %e, "Failed to launch Steam");
                 0
             }
         }
@@ -463,12 +463,12 @@ pub fn get_gptk_dir() -> String {
 pub fn install_wine(url: &str) -> bool {
     match moonshine_core::runtime::Runtime::download_wine(url) {
         Ok(path) => {
-            eprintln!("[Moonshine] Wine installed successfully at: {}", path.display());
+            tracing::info!(path = %path.display(), "Wine installed successfully");
             LAST_INSTALL_FAILED.store(false, Ordering::Relaxed);
             true
         }
         Err(e) => {
-            eprintln!("[Moonshine] install_wine FAILED: {}", e);
+            tracing::error!(error = %e, "install_wine FAILED");
             LAST_INSTALL_FAILED.store(true, Ordering::Relaxed);
             false
         }
@@ -519,10 +519,88 @@ pub fn kill_process(pid: u32) -> bool {
     // Send SIGTERM first (graceful shutdown)
     let result = unsafe { libc::kill(pid as libc::pid_t, libc::SIGTERM) };
     if result == 0 {
-        eprintln!("[Moonshine] Sent SIGTERM to PID {}", pid);
+        tracing::debug!(pid = pid, "Sent SIGTERM");
         true
     } else {
-        eprintln!("[Moonshine] kill({}) failed: {}", pid, std::io::Error::last_os_error());
+        tracing::error!(pid = pid, error = %std::io::Error::last_os_error(), "kill failed");
         false
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_kill_process_zero_pid() {
+        assert!(!kill_process(0));
+    }
+
+    #[test]
+    fn test_get_base_dir() {
+        let base_dir = get_base_dir();
+        assert!(!base_dir.is_empty());
+    }
+
+    #[test]
+    fn test_get_wine_dir() {
+        let wine_dir = get_wine_dir();
+        assert!(!wine_dir.is_empty());
+    }
+
+    #[test]
+    fn test_get_gptk_dir() {
+        let gptk_dir = get_gptk_dir();
+        assert!(!gptk_dir.is_empty());
+    }
+
+    #[test]
+    fn test_get_available_verbs() {
+        let verbs = get_available_verbs();
+        assert!(!verbs.is_empty());
+        assert!(verbs.iter().any(|v| v.contains("steam")));
+        assert!(verbs.iter().any(|v| v.contains("vcrun2019")));
+    }
+
+    #[test]
+    fn test_rust_prefix_new_prefix_returns_option() {
+        let prefix = RustPrefix::new_prefix("TestFFI");
+        // May be Some or None depending on filesystem permissions
+        // The important thing is it doesn't panic
+        if let Some(p) = prefix {
+            assert_eq!(p.get_name(), "TestFFI");
+            assert!(!p.get_id().is_empty());
+            let _ = p.delete_prefix();
+        }
+    }
+
+    #[test]
+    fn test_wine_backend_info() {
+        let info = WineBackendInfo {
+            inner: moonshine_core::WineInfo {
+                backend: moonshine_core::WineBackend::GPTK,
+                path: std::path::PathBuf::from("/test/wine64"),
+                version: Some("wine-9.0".to_string()),
+                has_wo64: false,
+            },
+        };
+
+        assert_eq!(info.get_backend_name(), "Game Porting Toolkit");
+        assert_eq!(info.get_wine_path(), "/test/wine64");
+        assert_eq!(info.get_version(), Some("wine-9.0".to_string()));
+        assert!(!info.has_wo64_support());
+    }
+
+    #[test]
+    fn test_list_all_prefixes_returns_vec() {
+        let prefixes = list_all_prefixes();
+        assert!(prefixes.is_empty() || !prefixes.is_empty()); // Just verify it doesn't panic
+    }
+
+    #[test]
+    fn test_last_install_error_default() {
+        // Reset the atomic
+        LAST_INSTALL_FAILED.store(false, Ordering::Relaxed);
+        assert!(!last_install_error());
     }
 }

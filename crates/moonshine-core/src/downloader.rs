@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use std::process::Command;
 
 pub fn download_file(url: &str, dest: &PathBuf) -> Result<PathBuf> {
-    eprintln!("[Moonshine] Downloading: {} -> {}", url, dest.display());
+    tracing::info!(url = %url, dest = %dest.display(), "Downloading file");
 
     if let Some(parent) = dest.parent() {
         fs::create_dir_all(parent)?;
@@ -31,8 +31,7 @@ pub fn download_file(url: &str, dest: &PathBuf) -> Result<PathBuf> {
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr).to_string();
         let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-        eprintln!("[Moonshine] curl stderr: {}", stderr);
-        eprintln!("[Moonshine] curl stdout: {}", stdout);
+        tracing::error!(stderr = %stderr, stdout = %stdout, "curl failed");
         return Err(MoonshineError::DownloadFailed(format!(
             "curl failed (exit {}): {}",
             output.status.code().unwrap_or(-1),
@@ -41,7 +40,7 @@ pub fn download_file(url: &str, dest: &PathBuf) -> Result<PathBuf> {
     }
 
     let file_size = fs::metadata(dest).map(|m| m.len()).unwrap_or(0);
-    eprintln!("[Moonshine] Downloaded {} bytes to {}", file_size, dest.display());
+    tracing::debug!(bytes = file_size, dest = %dest.display(), "Download complete");
     Ok(dest.clone())
 }
 

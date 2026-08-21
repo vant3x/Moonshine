@@ -32,7 +32,7 @@ pub struct Runtime;
 impl Runtime {
     pub fn download_wine(url: &str) -> Result<PathBuf> {
         let wine_dir = downloader::get_wine_dir()?;
-        eprintln!("[Moonshine] Wine dir: {}", wine_dir.display());
+        tracing::debug!(path = %wine_dir.display(), "Wine directory");
 
         let archives_dir = wine_dir.parent().unwrap().join("Archives");
         fs::create_dir_all(&archives_dir)?;
@@ -40,12 +40,12 @@ impl Runtime {
         let archive_name = url.split('/').last().unwrap_or("wine.tar.xz");
         let archive_path = archives_dir.join(archive_name);
 
-        eprintln!("[Moonshine] Downloading Wine from {} to {}", url, archive_path.display());
+        tracing::info!(url = %url, dest = %archive_path.display(), "Downloading Wine");
         downloader::download_file(url, &archive_path)?;
 
-        eprintln!("[Moonshine] Download complete, extracting...");
+        tracing::debug!("Download complete, extracting...");
         if wine_dir.exists() {
-            eprintln!("[Moonshine] Removing old wine dir");
+            tracing::debug!("Removing old wine dir");
             fs::remove_dir_all(&wine_dir)?;
         }
 
@@ -55,7 +55,7 @@ impl Runtime {
         }
         fs::create_dir_all(&temp_dir)?;
 
-        eprintln!("[Moonshine] Extracting archive: {}", archive_name);
+        tracing::debug!(archive = %archive_name, "Extracting archive");
         if archive_name.ends_with(".tar.xz") {
             downloader::extract_tar_xz(&archive_path, &temp_dir)?;
         } else if archive_name.ends_with(".tar.gz") || archive_name.ends_with(".tgz") {
@@ -74,20 +74,20 @@ impl Runtime {
             .filter_map(|e| e.ok())
             .collect();
 
-        eprintln!("[Moonshine] Extracted {} entries", entries.len());
+        tracing::debug!(count = entries.len(), "Extracted entries");
 
         if entries.len() == 1 && entries[0].file_type().map_or(false, |t| t.is_dir()) {
             let inner = entries[0].path();
             let inner_name = inner.file_name().unwrap().to_string_lossy();
-            eprintln!("[Moonshine] Single directory found: {}", inner_name);
+            tracing::debug!(name = %inner_name, "Single directory found");
 
             // Check if it's a .app bundle (e.g. "Game Porting Toolkit.app")
             if inner_name.ends_with(".app") {
-                eprintln!("[Moonshine] Detected .app bundle, looking for wine inside...");
+                tracing::debug!("Detected .app bundle, looking for wine inside...");
                 // GPTK .app structure: Contents/Resources/wine/bin/wine64
                 let app_wine = inner.join("Contents/Resources/wine/bin/wine64");
                 if app_wine.exists() {
-                    eprintln!("[Moonshine] Found wine at: {}", app_wine.display());
+                    tracing::debug!(path = %app_wine.display(), "Found wine in .app bundle");
                     // Create wine dir and copy the wine subtree
                     fs::create_dir_all(&wine_dir)?;
                     let wine_src = inner.join("Contents/Resources/wine");
@@ -95,15 +95,15 @@ impl Runtime {
                     copy_dir_all(&wine_src, &wine_dir)?;
                 } else {
                     // Try flat structure inside .app
-                    eprintln!("[Moonshine] No wine found in .app, trying flat copy");
+                    tracing::debug!("No wine found in .app, trying flat copy");
                     fs::rename(&inner, &wine_dir)?;
                 }
             } else {
-                eprintln!("[Moonshine] Moving directory: {}", inner.display());
+                tracing::debug!(path = %inner.display(), "Moving directory");
                 fs::rename(&inner, &wine_dir)?;
             }
         } else {
-            eprintln!("[Moonshine] Multiple entries, moving entire temp dir");
+            tracing::debug!("Multiple entries, moving entire temp dir");
             fs::rename(&temp_dir, &wine_dir)?;
         }
 
@@ -111,7 +111,7 @@ impl Runtime {
         fs::remove_file(&archive_path)?;
 
         // Remove macOS quarantine attribute so Gatekeeper doesn't block Wine binaries
-        eprintln!("[Moonshine] Removing quarantine attributes...");
+        tracing::debug!("Removing quarantine attributes...");
         let _ = Command::new("/usr/bin/xattr")
             .args(["-dr", "com.apple.quarantine"])
             .arg(&wine_dir)
@@ -121,7 +121,7 @@ impl Runtime {
         let wine_bin = wine_dir.join("bin/wine64");
         let wine_wrapper = wine_dir.join("bin/wine");
         if wine_bin.exists() && !wine_wrapper.exists() {
-            eprintln!("[Moonshine] Creating wine wrapper script...");
+            tracing::debug!("Creating wine wrapper script...");
             let wrapper_content = format!(
                 "#!/bin/bash\nexec \"{}\" \"$@\"\n",
                 wine_bin.display()
@@ -140,15 +140,15 @@ impl Runtime {
         // Also check wineserver
         let wineserver_bin = wine_dir.join("bin/wineserver");
         if wineserver_bin.exists() {
-            eprintln!("[Moonshine] wineserver found at: {}", wineserver_bin.display());
+            tracing::debug!(path = %wineserver_bin.display(), "wineserver found");
         }
 
-        eprintln!("[Moonshine] Checking wine binary: {}", wine_bin.display());
+        tracing::debug!(path = %wine_bin.display(), "Checking wine binary");
         if wine_bin.exists() {
-            eprintln!("[Moonshine] Wine installed successfully!");
+            tracing::info!("Wine installed successfully!");
             Ok(wine_bin)
         } else {
-            eprintln!("[Moonshine] Wine binary NOT found after extraction");
+            tracing::error!("Wine binary NOT found after extraction");
             Err(MoonshineError::WineNotFound(wine_bin))
         }
     }

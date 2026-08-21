@@ -9,7 +9,7 @@
 ## 1. Compilar Rust
 
 ```bash
-cd /Users/alevante/vante-dev/vanteplay
+cd /Users/alevante/vante-dev/moonshine
 ./scripts/build-rust.sh
 ```
 
@@ -26,7 +26,7 @@ Esto genera `libmoonshine_ffi.a` en `target/aarch64-apple-darwin/release/`.
    - Interface: **SwiftUI**
    - Language: **Swift**
    - Storage: **None**
-5. Guardar en `/Users/alevante/vante-dev/vanteplay/` (carpeta raíz del proyecto)
+5. Guardar en `/Users/alevante/vante-dev/moonshine/` (carpeta raíz del proyecto)
 6. **NO** crear Git repo (ya existe el workspace)
 
 ## 3. Agregar Archivos Swift
@@ -53,8 +53,8 @@ Moonshine/
 ### 4a. Copiar el `.a` al proyecto
 
 ```bash
-cp /Users/alevante/vante-dev/vanteplay/target/aarch64-apple-darwin/release/libmoonshine_ffi.a \
-   /Users/alevante/vante-dev/vanteplay/Moonshine/Bridge/
+cp /Users/alevante/vante-dev/moonshine/target/aarch64-apple-darwin/release/libmoonshine_ffi.a \
+   /Users/alevante/vante-dev/moonshine/Moonshine/Bridge/
 ```
 
 ### 4b. Agregar a Xcode
@@ -83,7 +83,7 @@ cp /Users/alevante/vante-dev/vanteplay/target/aarch64-apple-darwin/release/libmo
 ### 5a. Compilar con swift-bridge para generar el header
 
 ```bash
-cd /Users/alevante/vante-dev/vanteplay
+cd /Users/alevante/vante-dev/moonshine
 
 # Instalar swift-bridge CLI si no está
 cargo install swift-bridge-build

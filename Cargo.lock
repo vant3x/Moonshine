@@ -563,6 +563,7 @@ dependencies = [
  "serde_json",
  "swift-bridge",
  "swift-bridge-build",
+ "tracing",
 ]
 
 [[package]]

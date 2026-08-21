@@ -189,3 +189,132 @@ impl BottleConfig {
         Ok(config)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    fn temp_dir() -> PathBuf {
+        let dir = std::env::temp_dir().join(format!("moonshine_test_{}", uuid::Uuid::new_v4()));
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    #[test]
+    fn test_default_windows_version() {
+        assert_eq!(WindowsVersion::default(), WindowsVersion::Win10);
+    }
+
+    #[test]
+    fn test_windows_version_display() {
+        assert_eq!(WindowsVersion::Win10.to_string(), "win10");
+        assert_eq!(WindowsVersion::Win11.to_string(), "win11");
+    }
+
+    #[test]
+    fn test_default_graphics_backend() {
+        assert_eq!(GraphicsBackend::default(), GraphicsBackend::D3DMetal);
+    }
+
+    #[test]
+    fn test_graphics_backend_display() {
+        assert_eq!(GraphicsBackend::D3DMetal.to_string(), "d3dmetal");
+        assert_eq!(GraphicsBackend::DXVK.to_string(), "dxvk");
+    }
+
+    #[test]
+    fn test_default_sync_mode() {
+        assert_eq!(SyncMode::default(), SyncMode::Default);
+    }
+
+    #[test]
+    fn test_sync_mode_display() {
+        assert_eq!(SyncMode::Default.to_string(), "default");
+        assert_eq!(SyncMode::ESync.to_string(), "esync");
+        assert_eq!(SyncMode::MSync.to_string(), "msync");
+    }
+
+    #[test]
+    fn test_wine_backend_config_default() {
+        assert_eq!(WineBackendConfig::default(), WineBackendConfig::Auto);
+    }
+
+    #[test]
+    fn test_wine_backend_config_display() {
+        assert_eq!(WineBackendConfig::Auto.to_string(), "auto");
+        assert_eq!(WineBackendConfig::WineHQ.to_string(), "winehq");
+        assert_eq!(WineBackendConfig::GPTK.to_string(), "gptk");
+        assert_eq!(WineBackendConfig::CrossOver.to_string(), "crossover");
+        assert_eq!(WineBackendConfig::Custom.to_string(), "custom");
+    }
+
+    #[test]
+    fn test_wine_backend_config_has_wo64() {
+        assert!(!WineBackendConfig::Auto.has_wo64());
+        assert!(WineBackendConfig::WineHQ.has_wo64());
+        assert!(!WineBackendConfig::GPTK.has_wo64());
+        assert!(WineBackendConfig::CrossOver.has_wo64());
+        assert!(!WineBackendConfig::Custom.has_wo64());
+    }
+
+    #[test]
+    fn test_wine_backend_config_display_name() {
+        assert_eq!(WineBackendConfig::Auto.display_name(), "Auto (best available)");
+        assert_eq!(WineBackendConfig::WineHQ.display_name(), "WineHQ (Homebrew)");
+        assert_eq!(WineBackendConfig::GPTK.display_name(), "Game Porting Toolkit");
+        assert_eq!(WineBackendConfig::CrossOver.display_name(), "CrossOver");
+        assert_eq!(WineBackendConfig::Custom.display_name(), "Custom path");
+    }
+
+    #[test]
+    fn test_bottle_config_default() {
+        let config = BottleConfig::default();
+        assert!(config.name.is_empty());
+        assert_eq!(config.windows_version, WindowsVersion::Win10);
+        assert_eq!(config.graphics_backend, GraphicsBackend::D3DMetal);
+        assert_eq!(config.sync_mode, SyncMode::Default);
+        assert!(config.enable_metal_fx);
+        assert!(!config.enable_dxvk_hud);
+        assert!(config.dll_overrides.is_empty());
+        assert!(config.env_vars.is_empty());
+        assert!(config.wine_path.is_none());
+        assert_eq!(config.wine_backend, WineBackendConfig::Auto);
+        assert!(config.enable_hid_controllers);
+        assert!(config.reduce_wine_debug);
+    }
+
+    #[test]
+    fn test_bottle_config_save_and_load() {
+        let dir = temp_dir();
+        let mut config = BottleConfig::default();
+        config.name = "TestBottle".to_string();
+        config.windows_version = WindowsVersion::Win11;
+        config.graphics_backend = GraphicsBackend::DXVK;
+
+        config.save(&dir).unwrap();
+        let loaded = BottleConfig::load(&dir).unwrap();
+
+        assert_eq!(loaded.name, "TestBottle");
+        assert_eq!(loaded.windows_version, WindowsVersion::Win11);
+        assert_eq!(loaded.graphics_backend, GraphicsBackend::DXVK);
+
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_bottle_config_serialization_roundtrip() {
+        let config = BottleConfig::default();
+        let json = serde_json::to_string(&config).unwrap();
+        let deserialized: BottleConfig = serde_json::from_str(&json).unwrap();
+        assert_eq!(config.name, deserialized.name);
+        assert_eq!(config.windows_version, deserialized.windows_version);
+        assert_eq!(config.graphics_backend, deserialized.graphics_backend);
+    }
+
+    #[test]
+    fn test_bottle_config_path() {
+        let prefix_dir = PathBuf::from("/tmp/test");
+        assert_eq!(BottleConfig::config_path(&prefix_dir), PathBuf::from("/tmp/test/bottle.json"));
+    }
+}

@@ -16,3 +16,4 @@ moonshine-core = { path = "../moonshine-core" }
 swift-bridge = "0.1"
 serde_json.workspace = true
 libc = "0.2"
+tracing.workspace = true

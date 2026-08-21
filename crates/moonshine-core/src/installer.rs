@@ -12,9 +12,7 @@ const WINETRICKS_URL: &str =
     "https://raw.githubusercontent.com/Winetricks/winetricks/master/src/winetricks";
 
 pub fn get_installers_dir() -> Result<PathBuf> {
-    let home = dirs::home_dir().ok_or_else(|| {
-        MoonshineError::Config("Could not determine home directory".to_string())
-    })?;
+    let home = crate::prefix::get_real_home();
     let dir = home.join("Library/Application Support/Moonshine/Installers");
     fs::create_dir_all(&dir)?;
     Ok(dir)
@@ -24,10 +22,10 @@ pub fn download_steam_setup() -> Result<PathBuf> {
     let dir = get_installers_dir()?;
     let dest = dir.join("SteamSetup.exe");
     if dest.exists() {
-        eprintln!("[Moonshine] SteamSetup.exe already cached");
+        tracing::debug!("SteamSetup.exe already cached");
         return Ok(dest);
     }
-    eprintln!("[Moonshine] Downloading SteamSetup.exe...");
+    tracing::info!("Downloading SteamSetup.exe...");
     downloader::download_file(STEAM_SETUP_URL, &dest)?;
     Ok(dest)
 }
@@ -47,7 +45,7 @@ pub fn download_winetricks() -> Result<PathBuf> {
             }
         }
     }
-    eprintln!("[Moonshine] Downloading winetricks...");
+    tracing::info!("Downloading winetricks...");
     downloader::download_file(WINETRICKS_URL, &dest)?;
     // Make executable
     #[cfg(unix)]
@@ -64,15 +62,15 @@ pub fn install_steam(prefix: &Prefix) -> Result<String> {
     // SteamSetup.exe is a 32-bit application — requires WoW64 support.
     // If current backend doesn't have WoW64, try to find one that does.
     let effective_runner = if !runner.backend().has_wo64() {
-        eprintln!(
-            "[Moonshine] Current backend ({}) doesn't support 32-bit. Looking for WoW64 backend...",
-            runner.backend()
+        tracing::info!(
+            backend = %runner.backend(),
+            "Current backend doesn't support 32-bit. Looking for WoW64 backend..."
         );
         match WineRunner::find_backend_with_wo64() {
             Ok(wo64_runner) => {
-                eprintln!(
-                    "[Moonshine] Auto-fallback: using {} for Steam installation",
-                    wo64_runner.backend()
+                tracing::info!(
+                    backend = %wo64_runner.backend(),
+                    "Auto-fallback: using backend for Steam installation"
                 );
                 wo64_runner
             }
@@ -106,10 +104,10 @@ pub fn install_steam(prefix: &Prefix) -> Result<String> {
 
     let setup_exe = download_steam_setup()?;
 
-    eprintln!("[Moonshine] Running SteamSetup.exe in prefix: {}", prefix.name);
-    eprintln!("[Moonshine] Wine binary: {}", effective_runner.wine_bin_path().display());
-    eprintln!("[Moonshine] Backend: {}", effective_runner.backend());
-    eprintln!("[Moonshine] Prefix path: {}", prefix.path.display());
+    tracing::info!(prefix = %prefix.name, "Running SteamSetup.exe");
+    tracing::debug!(wine = %effective_runner.wine_bin_path().display(), "Wine binary");
+    tracing::debug!(backend = %effective_runner.backend(), "Backend");
+    tracing::debug!(prefix = %prefix.path.display(), "Prefix path");
 
     // Copy to drive_c to avoid path issues with GPTK wine
     let drive_c = prefix.drive_c();
@@ -136,7 +134,7 @@ pub fn install_steam(prefix: &Prefix) -> Result<String> {
 
     // Try running with wine64 directly first (bypasses start.exe issues)
     let unix_path = dest_exe.to_string_lossy().to_string();
-    eprintln!("[Moonshine] Attempting to run SteamSetup.exe directly with wine64...");
+    tracing::debug!("Attempting to run SteamSetup.exe directly with wine64...");
 
     // Method 1: Direct wine64 execution (most reliable for GPTK)
     let output = std::process::Command::new(effective_runner.wine_bin_path())
@@ -147,12 +145,11 @@ pub fn install_steam(prefix: &Prefix) -> Result<String> {
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    eprintln!("[Moonshine] SteamSetup direct stdout: {}", stdout);
-    eprintln!("[Moonshine] SteamSetup direct stderr: {}", stderr);
+    tracing::debug!(stdout = %stdout, stderr = %stderr, "SteamSetup direct execution");
 
     // If direct execution failed, try with start /unix
     if !output.status.success() {
-        eprintln!("[Moonshine] Direct execution failed, trying with start /unix...");
+        tracing::debug!("Direct execution failed, trying with start /unix...");
         let output2 = std::process::Command::new(effective_runner.wine_bin_path())
             .arg("start")
             .arg("/unix")
@@ -163,8 +160,7 @@ pub fn install_steam(prefix: &Prefix) -> Result<String> {
 
         let stdout2 = String::from_utf8_lossy(&output2.stdout).to_string();
         let stderr2 = String::from_utf8_lossy(&output2.stderr).to_string();
-        eprintln!("[Moonshine] SteamSetup start /unix stdout: {}", stdout2);
-        eprintln!("[Moonshine] SteamSetup start /unix stderr: {}", stderr2);
+        tracing::debug!(stdout = %stdout2, stderr = %stderr2, "SteamSetup start /unix execution");
 
         // If both methods failed, report the error
         if !output2.status.success() {
@@ -191,7 +187,7 @@ pub fn install_steam(prefix: &Prefix) -> Result<String> {
     let _ = fs::remove_file(&dest_exe);
 
     // Kill wineserver after Steam installation to avoid stale processes
-    eprintln!("[Moonshine] Stopping wineserver after Steam install...");
+    tracing::debug!("Stopping wineserver after Steam install...");
     let wineserver = effective_runner.wine_bin_path().parent()
         .unwrap_or(effective_runner.wine_bin_path())
         .join("wineserver");
@@ -204,15 +200,15 @@ pub fn install_steam(prefix: &Prefix) -> Result<String> {
     // Steam installs to drive_c/Program Files (x86)/Steam/ by default
     let steam_exe = prefix.drive_c().join("Program Files (x86)/Steam/steam.exe");
     if steam_exe.exists() {
-        eprintln!("[Moonshine] Steam installed successfully at: {}", steam_exe.display());
+        tracing::info!(path = %steam_exe.display(), "Steam installed successfully");
         Ok(steam_exe.to_string_lossy().to_string())
     } else {
         let alt = prefix.drive_c().join("Program Files/Steam/steam.exe");
         if alt.exists() {
-            eprintln!("[Moonshine] Steam installed at: {}", alt.display());
+            tracing::info!(path = %alt.display(), "Steam installed at alternative location");
             Ok(alt.to_string_lossy().to_string())
         } else {
-            eprintln!("[Moonshine] Steam installer ran but steam.exe not found");
+            tracing::warn!("Steam installer ran but steam.exe not found");
             Err(MoonshineError::WineProcessFailed(Some(0)))
         }
     }
@@ -228,8 +224,8 @@ pub fn launch_steam_detached(prefix: &Prefix) -> Result<u32> {
             "Steam not found in this prefix. Install it first.".to_string()
         ))?;
 
-    eprintln!("[Moonshine] Launching Steam (detached): {}", steam_exe.display());
-    eprintln!("[Moonshine] Controller support: {}", prefix.config.enable_hid_controllers);
+    tracing::info!(path = %steam_exe.display(), "Launching Steam (detached)");
+    tracing::debug!(hid_controllers = prefix.config.enable_hid_controllers, "Controller support");
 
     runner.launch_program(prefix, &steam_exe)
 }
@@ -282,9 +278,9 @@ pub fn run_winetricks(prefix: &Prefix, verb: &str) -> Result<String> {
 
     let winetricks = download_winetricks()?;
 
-    eprintln!("[Moonshine] Running winetricks {} in prefix: {}", verb, prefix.name);
-    eprintln!("[Moonshine] Wine backend: {}", runner.backend());
-    eprintln!("[Moonshine] WoW64 support: {}", runner.backend().has_wo64());
+    tracing::info!(verb = %verb, prefix = %prefix.name, "Running winetricks");
+    tracing::debug!(backend = %runner.backend(), "Wine backend");
+    tracing::debug!(has_wo64 = runner.backend().has_wo64(), "WoW64 support");
 
     // Create a patched winetricks wrapper that fixes the syswow64 regedit path issue
     let patched_winetricks = create_patched_winetricks(&winetricks, prefix)?;
@@ -315,9 +311,9 @@ pub fn run_winetricks(prefix: &Prefix, verb: &str) -> Result<String> {
         env.insert("WINEARCH".to_string(), "wow64".to_string());
     }
 
-    eprintln!("[Moonshine] winetricks env WINE={}", env.get("WINE").unwrap_or(&String::new()));
-    eprintln!("[Moonshine] winetricks env WINEPREFIX={}", env.get("WINEPREFIX").unwrap_or(&String::new()));
-    eprintln!("[Moonshine] winetricks env WINEARCH={}", env.get("WINEARCH").unwrap_or(&String::new()));
+    tracing::debug!(wine = %env.get("WINE").unwrap_or(&String::new()), "winetricks env WINE");
+    tracing::debug!(wineprefix = %env.get("WINEPREFIX").unwrap_or(&String::new()), "winetricks env WINEPREFIX");
+    tracing::debug!(winearch = %env.get("WINEARCH").unwrap_or(&String::new()), "winetricks env WINEARCH");
 
     let output = std::process::Command::new("/bin/bash")
         .arg(&patched_winetricks)
@@ -331,8 +327,7 @@ pub fn run_winetricks(prefix: &Prefix, verb: &str) -> Result<String> {
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-    eprintln!("[Moonshine] winetricks stdout: {}", stdout);
-    eprintln!("[Moonshine] winetricks stderr: {}", stderr);
+    tracing::debug!(stdout = %stdout, stderr = %stderr, "winetricks completed");
 
     if !output.status.success() {
         // Provide actionable error messages
@@ -401,7 +396,7 @@ fn create_patched_winetricks(original: &std::path::Path, _prefix: &Prefix) -> Re
         let _ = fs::set_permissions(&patched_path, fs::Permissions::from_mode(0o755));
     }
 
-    eprintln!("[Moonshine] Created patched winetricks at: {}", patched_path.display());
+    tracing::debug!(path = %patched_path.display(), "Created patched winetricks");
     Ok(patched_path)
 }
 

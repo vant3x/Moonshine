@@ -151,7 +151,7 @@ impl WineRunner {
         let backends = Self::detect_all();
         for info in backends {
             if info.has_wo64 {
-                eprintln!("[Moonshine] Found WoW64-capable backend: {} at {}", info.backend, info.path.display());
+                tracing::debug!(backend = %info.backend, path = %info.path.display(), "Found WoW64-capable backend");
                 return Ok(Self::with_backend(info.path, info.backend));
             }
         }
@@ -170,10 +170,10 @@ impl WineRunner {
         for info in &backends {
             if let Some(ref version) = info.version {
                 if version.contains("wine-11.0") {
-                    eprintln!("[Moonshine] WARNING: {} has known msvcrt.dll crash bug on macOS ARM64", version);
-                    eprintln!("[Moonshine] All wine commands will fail with: Unhandled exception 0xc0000417");
-                    eprintln!("[Moonshine] Fix: brew install --cask wine@devel");
-                    eprintln!("[Moonshine] Or install CrossOver: https://www.codeweavers.com");
+                    tracing::warn!(version = %version, "Wine has known msvcrt.dll crash bug on macOS ARM64");
+                    tracing::info!("All wine commands will fail with: Unhandled exception 0xc0000417");
+                    tracing::info!("Fix: brew install --cask wine@devel");
+                    tracing::info!("Or install CrossOver: https://www.codeweavers.com");
                 }
             }
         }
@@ -182,7 +182,7 @@ impl WineRunner {
         let healthy = backends.iter().find(|info| {
             if let Some(ref version) = info.version {
                 if version.starts_with("wine-11.0") && !version.starts_with("wine-11.0.0") {
-                    eprintln!("[Moonshine] Skipping {} ({}) - has msvcrt bug", info.backend, version);
+                    tracing::debug!(backend = %info.backend, version = %version, "Skipping backend - has msvcrt bug");
                     return false;
                 }
             }
@@ -190,7 +190,7 @@ impl WineRunner {
         });
 
         if let Some(best) = healthy {
-            eprintln!("[Moonshine] Best backend: {} ({})", best.backend, best.path.display());
+            tracing::debug!(backend = %best.backend, path = %best.path.display(), "Best backend selected");
             return Ok(best.clone());
         }
 
@@ -579,7 +579,7 @@ impl WineRunner {
             // Match exactly "wine-11.0" or "wine-11.0." but NOT "wine-11.1", "wine-11.10", etc.
             if (version.starts_with("wine-11.0") && !version.starts_with("wine-11.0.0"))
                 || version == "wine-11.0" {
-                eprintln!("[Moonshine] DETECTED: {} has known msvcrt bug (Wine 11.0)", version);
+                tracing::warn!(version = %version, "Detected Wine has known msvcrt bug (Wine 11.0)");
                 return true;
             }
         }
@@ -724,7 +724,7 @@ impl WineRunner {
 
         // If direct execution failed, try with start /unix
         if !output.status.success() {
-            eprintln!("[Moonshine] Direct execution failed, trying start /unix...");
+            tracing::debug!("Direct execution failed, trying start /unix...");
             let mut cmd2 = Command::new(&self.wine_bin);
             cmd2.arg("start");
             cmd2.arg("/unix");
@@ -752,9 +752,9 @@ impl WineRunner {
 
         let unix_path = program_path.to_string_lossy().to_string();
 
-        eprintln!("[Moonshine] Launching (detached): {}", unix_path);
-        eprintln!("[Moonshine] Wine binary: {}", self.wine_bin.display());
-        eprintln!("[Moonshine] HID controllers: {}", prefix.config.enable_hid_controllers);
+        tracing::debug!(path = %unix_path, "Launching program (detached)");
+        tracing::debug!(wine = %self.wine_bin.display(), "Using Wine binary");
+        tracing::debug!(hid_controllers = prefix.config.enable_hid_controllers, "HID controller setting");
 
         let mut cmd = Command::new(&self.wine_bin);
         cmd.arg(&unix_path);
@@ -765,7 +765,7 @@ impl WineRunner {
         // spawn() returns immediately, child runs independently
         let child = cmd.spawn().map_err(|e| MoonshineError::Io(e))?;
         let pid = child.id();
-        eprintln!("[Moonshine] Process launched with PID: {}", pid);
+        tracing::debug!(pid = pid, "Process launched");
 
         // Intentionally forget the child handle — process runs independently
         // macOS will clean up when the process exits
@@ -777,13 +777,13 @@ impl WineRunner {
     pub fn init_prefix(&self, prefix: &Prefix) -> Result<Output> {
         let env = Self::build_env(prefix, &prefix.config, &self.backend);
 
-        eprintln!("[Moonshine] Running wineboot in: {}", prefix.path.display());
-        eprintln!("[Moonshine] Wine binary: {}", self.wine_bin.display());
-        eprintln!("[Moonshine] Backend: {}", self.backend);
+        tracing::info!(prefix = %prefix.path.display(), "Running wineboot");
+        tracing::debug!(wine = %self.wine_bin.display(), "Wine binary");
+        tracing::debug!(backend = %self.backend, "Wine backend");
 
         // Pre-check: detect Wine 11.0 msvcrt bug before attempting wineboot
         if self.has_known_msvcrt_bug() {
-            eprintln!("[Moonshine] Wine 11.0 msvcrt bug detected, skipping direct wineboot...");
+            tracing::warn!("Wine 11.0 msvcrt bug detected, skipping direct wineboot...");
             // Fall through to GPTK fallback below
         } else {
             // First: wineboot (creates prefix structure)
@@ -794,13 +794,11 @@ impl WineRunner {
 
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
-            eprintln!("[Moonshine] wineboot stdout: {}", stdout);
-            eprintln!("[Moonshine] wineboot stderr: {}", stderr);
-            eprintln!("[Moonshine] wineboot status: {}", output.status);
+            tracing::debug!(stdout = %stdout, stderr = %stderr, status = %output.status, "wineboot completed");
 
             // If wineboot failed, kill stale wineserver before fallback
             if !output.status.success() {
-                eprintln!("[Moonshine] wineboot failed, killing stale wineserver...");
+                tracing::debug!("wineboot failed, killing stale wineserver...");
                 let wineserver = self.wine_bin.parent().unwrap_or(&self.wine_bin).join("wineserver");
                 let _ = Command::new(&wineserver)
                     .arg("-k")
@@ -819,9 +817,7 @@ impl WineRunner {
 
                 let stderr2 = String::from_utf8_lossy(&output2.stderr);
                 let stdout2 = String::from_utf8_lossy(&output2.stdout);
-                eprintln!("[Moonshine] wineboot -u stdout: {}", stdout2);
-                eprintln!("[Moonshine] wineboot -u stderr: {}", stderr2);
-                eprintln!("[Moonshine] wineboot -u status: {}", output2.status);
+                tracing::debug!(stdout = %stdout2, stderr = %stderr2, status = %output2.status, "wineboot -u completed");
 
                 // Populate syswow64 if backend lacks WoW64
                 if !self.backend.has_wo64() {
@@ -833,7 +829,7 @@ impl WineRunner {
 
             // Wineboot failed — if this is WineHQ, try GPTK as fallback
             if self.backend == WineBackend::WineHQ {
-                eprintln!("[Moonshine] WineHQ wineboot failed, falling back to GPTK for wineboot...");
+                tracing::info!("WineHQ wineboot failed, falling back to GPTK for wineboot...");
             } else {
                 // Non-WineHQ backend failed and no fallback — return the error
                 return Ok(output);
@@ -850,22 +846,21 @@ impl WineRunner {
                 .envs(&gptk_env)
                 .output();
             if let Ok(gptk_result) = gptk_output {
-                eprintln!("[Moonshine] GPTK wineboot stderr: {}", String::from_utf8_lossy(&gptk_result.stderr));
-                eprintln!("[Moonshine] GPTK wineboot status: {}", gptk_result.status);
+                tracing::debug!(stderr = %String::from_utf8_lossy(&gptk_result.stderr), status = %gptk_result.status, "GPTK wineboot completed");
 
                 if gptk_result.status.success() {
-                    eprintln!("[Moonshine] GPTK wineboot -u (Mono/Gecko install)...");
+                    tracing::debug!("GPTK wineboot -u (Mono/Gecko install)...");
                     let gptk_update = Command::new(gptk_runner.wine_bin_path())
                         .arg("wineboot")
                         .arg("-u")
                         .envs(&gptk_env)
                         .output();
                     if let Ok(gptk_u) = gptk_update {
-                        eprintln!("[Moonshine] GPTK wineboot -u status: {}", gptk_u.status);
+                        tracing::debug!(status = %gptk_u.status, "GPTK wineboot -u completed");
                     }
 
                     // Kill GPTK wineserver after initialization
-                    eprintln!("[Moonshine] Stopping GPTK wineserver...");
+                    tracing::debug!("Stopping GPTK wineserver...");
                     let _ = Command::new(gptk_runner.wine_bin_path().parent().unwrap_or(gptk_runner.wine_bin_path()).join("wineserver"))
                         .arg("-k")
                         .arg("-w")
@@ -884,9 +879,9 @@ impl WineRunner {
                     });
                 }
             }
-            eprintln!("[Moonshine] GPTK wineboot also failed");
+            tracing::error!("GPTK wineboot also failed");
         } else {
-            eprintln!("[Moonshine] GPTK not available as fallback");
+            tracing::error!("GPTK not available as fallback");
         }
 
         // All attempts failed — return error
@@ -900,7 +895,7 @@ impl WineRunner {
         let system32 = prefix.path.join("drive_c/windows/system32");
         let windows_dir = prefix.path.join("drive_c/windows");
 
-        eprintln!("[Moonshine] Populating syswow64 with symlinks...");
+        tracing::debug!("Populating syswow64 with symlinks...");
 
         let critical_files = [
             "regedit.exe",
@@ -957,7 +952,7 @@ impl WineRunner {
             }
         }
 
-        eprintln!("[Moonshine] syswow64 population complete");
+        tracing::debug!("syswow64 population complete");
     }
 
     pub fn set_windows_version(&self, prefix: &Prefix, version: &str) -> Result<Output> {
@@ -1046,5 +1041,172 @@ impl std::fmt::Display for Wo64Status {
                        has_regedit, has_rundll32, has_regedit64)
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_wine_backend_has_wo64() {
+        assert!(WineBackend::CrossOver.has_wo64());
+        assert!(WineBackend::WineHQ.has_wo64());
+        assert!(WineBackend::Whisky.has_wo64());
+        assert!(!WineBackend::GPTK.has_wo64());
+        assert!(WineBackend::WineStable.has_wo64());
+        assert!(!WineBackend::Unknown.has_wo64());
+    }
+
+    #[test]
+    fn test_wine_backend_display_name() {
+        assert_eq!(WineBackend::CrossOver.display_name(), "CrossOver");
+        assert_eq!(WineBackend::WineHQ.display_name(), "WineHQ (Homebrew)");
+        assert_eq!(WineBackend::Whisky.display_name(), "Whisky");
+        assert_eq!(WineBackend::GPTK.display_name(), "Game Porting Toolkit");
+        assert_eq!(WineBackend::WineStable.display_name(), "Wine Stable");
+        assert_eq!(WineBackend::Unknown.display_name(), "Custom");
+    }
+
+    #[test]
+    fn test_wine_backend_display_trait() {
+        assert_eq!(WineBackend::CrossOver.to_string(), "CrossOver");
+        assert_eq!(WineBackend::WineHQ.to_string(), "WineHQ (Homebrew)");
+    }
+
+    #[test]
+    fn test_wine_backend_ordering() {
+        // CrossOver > WineHQ > Whisky > GPTK > WineStable > Unknown
+        assert!(WineBackend::CrossOver < WineBackend::WineHQ);
+        assert!(WineBackend::WineHQ < WineBackend::Whisky);
+        assert!(WineBackend::Whisky < WineBackend::GPTK);
+        assert!(WineBackend::GPTK < WineBackend::WineStable);
+        assert!(WineBackend::WineStable < WineBackend::Unknown);
+    }
+
+    #[test]
+    fn test_wine_runner_new() {
+        let runner = WineRunner::new(PathBuf::from("/usr/bin/wine64"));
+        assert_eq!(runner.wine_bin_path(), &PathBuf::from("/usr/bin/wine64"));
+        assert_eq!(runner.backend(), &WineBackend::Unknown);
+    }
+
+    #[test]
+    fn test_wine_runner_with_backend() {
+        let runner = WineRunner::with_backend(PathBuf::from("/usr/bin/wine64"), WineBackend::GPTK);
+        assert_eq!(runner.wine_bin_path(), &PathBuf::from("/usr/bin/wine64"));
+        assert_eq!(runner.backend(), &WineBackend::GPTK);
+    }
+
+    #[test]
+    fn test_wo64_status_display() {
+        assert_eq!(Wo64Status::Working.to_string(), "WoW64 is working (syswow64 populated)");
+        assert_eq!(Wo64Status::NotCreated.to_string(), "WoW64 not created (syswow64 directory missing)");
+        assert_eq!(Wo64Status::Empty.to_string(), "WoW64 broken (syswow64 is empty - GPTK limitation)");
+    }
+
+    #[test]
+    fn test_wo64_status_partial_display() {
+        let status = Wo64Status::Partial {
+            has_regedit: true,
+            has_rundll32: false,
+            has_regedit64: true,
+        };
+        assert_eq!(status.to_string(), "WoW64 partial: regedit32=true, rundll32=false, regedit64=true");
+    }
+
+    #[test]
+    fn test_detect_backend_for_path() {
+        assert_eq!(
+            WineRunner::detect_backend_for_path(&PathBuf::from("/Applications/CrossOver.app/Contents/Frameworks/bin/wine64")),
+            WineBackend::CrossOver
+        );
+        assert_eq!(
+            WineRunner::detect_backend_for_path(&PathBuf::from("/Applications/Whisky.app/Contents/Resources/wine64")),
+            WineBackend::Whisky
+        );
+        assert_eq!(
+            WineRunner::detect_backend_for_path(&PathBuf::from("/Users/test/Library/Application Support/Moonshine/Libraries/Wine/bin/wine64")),
+            WineBackend::GPTK
+        );
+        assert_eq!(
+            WineRunner::detect_backend_for_path(&PathBuf::from("/opt/homebrew/bin/wine64")),
+            WineBackend::WineHQ
+        );
+    }
+
+    #[test]
+    fn test_build_env_wineprefix() {
+        let dir = std::env::temp_dir().join(format!("moonshine_env_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let prefix = Prefix::new("Test", &dir).unwrap();
+        let config = prefix.config.clone();
+        let env = WineRunner::build_env(&prefix, &config, &WineBackend::GPTK);
+
+        assert!(env.contains_key("WINEPREFIX"));
+        assert_eq!(env.get("WINEPREFIX").unwrap(), &prefix.path.to_string_lossy().to_string());
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_build_env_esync() {
+        let dir = std::env::temp_dir().join(format!("moonshine_env_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut prefix = Prefix::new("Test", &dir).unwrap();
+        prefix.config.sync_mode = SyncMode::ESync;
+        let config = prefix.config.clone();
+        let env = WineRunner::build_env(&prefix, &config, &WineBackend::GPTK);
+
+        assert!(env.contains_key("WINEESYNC"));
+        assert_eq!(env.get("WINEESYNC").unwrap(), "1");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_build_env_msync() {
+        let dir = std::env::temp_dir().join(format!("moonshine_env_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let mut prefix = Prefix::new("Test", &dir).unwrap();
+        prefix.config.sync_mode = SyncMode::MSync;
+        let config = prefix.config.clone();
+        let env = WineRunner::build_env(&prefix, &config, &WineBackend::GPTK);
+
+        assert!(env.contains_key("WINEMSYNC"));
+        assert_eq!(env.get("WINEMSYNC").unwrap(), "1");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_build_env_gptk_arch() {
+        let dir = std::env::temp_dir().join(format!("moonshine_env_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let prefix = Prefix::new("Test", &dir).unwrap();
+        let config = prefix.config.clone();
+        let env = WineRunner::build_env(&prefix, &config, &WineBackend::GPTK);
+
+        assert_eq!(env.get("WINEARCH").unwrap(), "win64");
+
+        std::fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_build_env_non_gptk_arch() {
+        let dir = std::env::temp_dir().join(format!("moonshine_env_test_{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+
+        let prefix = Prefix::new("Test", &dir).unwrap();
+        let config = prefix.config.clone();
+        let env = WineRunner::build_env(&prefix, &config, &WineBackend::WineHQ);
+
+        assert_eq!(env.get("WINEARCH").unwrap(), "wow64");
+
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }
