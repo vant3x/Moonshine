@@ -134,11 +134,16 @@ pub fn install_steam(prefix: &Prefix) -> Result<String> {
 
     // Try running with wine64 directly first (bypasses start.exe issues)
     let unix_path = dest_exe.to_string_lossy().to_string();
-    tracing::debug!("Attempting to run SteamSetup.exe directly with wine64...");
+    tracing::debug!("Attempting to run SteamSetup.exe (silent) directly with wine64...");
 
-    // Method 1: Direct wine64 execution (most reliable for GPTK)
+    // Method 1: Direct wine64 execution with /S flag for silent install
+    // /S = silent install, /D = install directory (must be last arg)
+    let steam_install_dir = "C:\\Program Files (x86)\\Steam";
     let output = std::process::Command::new(effective_runner.wine_bin_path())
         .arg(&unix_path)
+        .arg("/S")
+        .arg("/D")
+        .arg(steam_install_dir)
         .envs(&env)
         .output()
         .map_err(|e| MoonshineError::Io(e))?;
@@ -149,11 +154,14 @@ pub fn install_steam(prefix: &Prefix) -> Result<String> {
 
     // If direct execution failed, try with start /unix
     if !output.status.success() {
-        tracing::debug!("Direct execution failed, trying with start /unix...");
+        tracing::debug!("Direct execution failed, trying with start /unix (silent)...");
         let output2 = std::process::Command::new(effective_runner.wine_bin_path())
             .arg("start")
             .arg("/unix")
             .arg(&unix_path)
+            .arg("/S")
+            .arg("/D")
+            .arg(steam_install_dir)
             .envs(&env)
             .output()
             .map_err(|e| MoonshineError::Io(e))?;
@@ -350,6 +358,39 @@ pub fn run_winetricks(prefix: &Prefix, verb: &str) -> Result<String> {
     }
 
     Ok(stdout)
+}
+
+/// Dependency presets for common game launchers.
+/// Each preset installs multiple winetricks verbs in sequence so the user
+/// doesn't have to install them one by one.
+pub fn run_winetricks_preset(prefix: &Prefix, preset: &str) -> Result<String> {
+    let (verbs, label) = match preset {
+        "steam" => (vec!["vcrun2019", "corefonts"], "Steam"),
+        "epic" => (vec!["vcrun2019", "corefonts", "dotnet48"], "Epic Games"),
+        "gog" => (vec!["vcrun2019", "corefonts"], "GOG Galaxy"),
+        "gaming-basic" => (vec!["vcrun2019", "d3dcompiler_47", "xinput"], "Gaming (basic)"),
+        "gaming-full" => (vec!["vcrun2019", "d3dcompiler_47", "dxvk", "xact", "xinput"], "Gaming (full)"),
+        _ => return Err(MoonshineError::Config(format!("Unknown preset: {}", preset))),
+    };
+
+    tracing::info!(preset = %label, verbs = ?verbs, prefix = %prefix.name, "Running winetricks preset");
+
+    let mut results = Vec::new();
+    for verb in &verbs {
+        tracing::info!(verb = %verb, "Preset step: installing {}", verb);
+        match run_winetricks(prefix, verb) {
+            Ok(_output) => {
+                results.push(format!("✓ {} — installed", verb));
+            }
+            Err(e) => {
+                // Don't abort the whole preset on one failure — report it and continue
+                tracing::warn!(verb = %verb, error = %e, "Preset step failed");
+                results.push(format!("✗ {} — failed: {}", verb, e));
+            }
+        }
+    }
+
+    Ok(results.join("\n"))
 }
 
 /// Create a patched copy of winetricks that fixes the syswow64 regedit path issue.

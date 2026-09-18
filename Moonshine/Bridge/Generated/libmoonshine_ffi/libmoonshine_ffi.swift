@@ -1,3 +1,6 @@
+public func init_logging() {
+    __swift_bridge__$init_logging()
+}
 public func detect_wine() -> Optional<RustString> {
     { let val = __swift_bridge__$detect_wine(); if val != nil { return RustString(ptr: val!) } else { return nil } }()
 }
@@ -553,6 +556,12 @@ extension RustPrefixRef {
     public func run_winetricks<GenericToRustStr: ToRustStr>(_ verb: GenericToRustStr) -> RustString {
         return verb.toRustStr({ verbAsRustStr in
             RustString(ptr: __swift_bridge__$RustPrefix$run_winetricks(ptr, verbAsRustStr))
+        })
+    }
+
+    public func run_winetricks_preset<GenericToRustStr: ToRustStr>(_ preset: GenericToRustStr) -> RustString {
+        return preset.toRustStr({ presetAsRustStr in
+            RustString(ptr: __swift_bridge__$RustPrefix$run_winetricks_preset(ptr, presetAsRustStr))
         })
     }
 

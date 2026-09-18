@@ -49,6 +49,7 @@ class AppViewModel: ObservableObject {
     }
 
     func setup() {
+        init_logging()
         baseDir = get_base_dir().toString()
         detectRuntime()
         detectBackends()
@@ -117,9 +118,15 @@ class AppViewModel: ObservableObject {
                     self.detectRuntime()
                     self.detectBackends()
                 } else {
-                    // Extract meaningful error from Rust stderr
+                    // Extract meaningful error from Rust tracing logs
                     let lines = errorOutput.components(separatedBy: "\n")
-                    let errorLine = lines.last { $0.contains("[Moonshine]") } ?? "Unknown error"
+                        .map { $0.trimmingCharacters(in: .whitespaces) }
+                        .filter { !$0.isEmpty }
+                    // tracing format: "2024-01-15T... ERROR message" or "ERROR message"
+                    let errorLine = lines.last { $0.uppercased().contains("ERROR") }
+                        ?? lines.last { $0.uppercased().contains("WARN") }
+                        ?? lines.last
+                        ?? "Unknown error"
                     self.downloadStatus = "Download failed: \(errorLine)"
                     print("[Moonshine-Swift] Error output:\n\(errorOutput)")
                 }
@@ -161,7 +168,10 @@ class AppViewModel: ObservableObject {
     }
 
     func createPrefix(name: String, windowsVersion: String, graphicsBackend: String) {
-        let prefix = RustPrefix(name)
+        guard let prefix = RustPrefix(name) else {
+            print("[Moonshine] Failed to create prefix: \(name)")
+            return
+        }
         prefix.set_windows_version(windowsVersion == "win10" ? .Win10 : .Win11)
         prefix.set_graphics_backend(graphicsBackend == "d3dmetal" ? .D3DMetal : .DXVK)
         _ = prefix.save()
@@ -407,6 +417,47 @@ class AppViewModel: ObservableObject {
                     self.installStatus = "\(btVerb) failed"
                 } else {
                     self.installStatus = "\(btVerb) installed successfully"
+                }
+            }
+        }
+    }
+
+    func runWinetricksPreset(id: String, preset: String) {
+        guard !isInstalling && !isInitializing else { return }
+        isInstalling = true
+        let presetLabels: [String: String] = [
+            "steam": "Steam", "epic": "Epic Games", "gog": "GOG Galaxy",
+            "gaming-basic": "Gaming (basic)", "gaming-full": "Gaming (full)",
+        ]
+        let label = presetLabels[preset] ?? preset
+        installStatus = "Installing \(label) preset (this may take several minutes)..."
+        let prefixId = id
+        let btPreset = preset
+        Task.detached {
+            let vec = list_all_prefixes()
+            var targetRp: RustPrefixRef?
+            for i in 0..<vec.len() {
+                if let rp = vec.get(index: UInt(i)) {
+                    if rp.get_id().toString() == prefixId {
+                        targetRp = rp
+                        break
+                    }
+                }
+            }
+            guard let rp = targetRp else {
+                await MainActor.run {
+                    self.isInstalling = false
+                    self.installStatus = "Prefix not found"
+                }
+                return
+            }
+            let result = rp.run_winetricks_preset(btPreset).toString()
+            await MainActor.run {
+                self.isInstalling = false
+                if result.contains("✗") {
+                    self.installStatus = "\(label) preset completed with some failures:\n\(result)"
+                } else {
+                    self.installStatus = "\(label) preset installed successfully"
                 }
             }
         }

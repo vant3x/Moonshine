@@ -170,9 +170,30 @@ struct SettingsView: View {
         fixWineStatus = "Installing wine@devel (11.10)..."
 
         Task.detached {
+            // Find brew: Apple Silicon uses /opt/homebrew/bin, Intel uses /usr/local/bin
+            let brewCandidates = [
+                "/opt/homebrew/bin/brew",
+                "/usr/local/bin/brew",
+            ]
+            var brewPath: String? = nil
+            for candidate in brewCandidates {
+                if FileManager.default.isExecutableFile(atPath: candidate) {
+                    brewPath = candidate
+                    break
+                }
+            }
+
+            guard let brew = brewPath else {
+                await MainActor.run {
+                    isFixingWine = false
+                    fixWineStatus = "Homebrew not found. Install from https://brew.sh"
+                }
+                return
+            }
+
             // Install wine@devel which has the msvcrt fix
             let install = Process()
-            install.executableURL = URL(fileURLWithPath: "/opt/homebrew/bin/brew")
+            install.executableURL = URL(fileURLWithPath: brew)
             install.arguments = ["install", "--cask", "wine@devel"]
             let pipe = Pipe()
             install.standardOutput = pipe

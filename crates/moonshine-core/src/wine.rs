@@ -713,6 +713,20 @@ impl WineRunner {
 
         let unix_path = program_path.to_string_lossy().to_string();
 
+        // Detect .msi installers — need msiexec /i instead of direct execution
+        let is_msi = program_path.extension()
+            .map_or(false, |ext| ext.eq_ignore_ascii_case("msi"));
+
+        if is_msi {
+            tracing::debug!(path = %unix_path, "Detected .msi installer, using msiexec /i");
+            let mut cmd = Command::new(&self.wine_bin);
+            cmd.arg("msiexec").arg("/i").arg(&unix_path);
+            for (key, value) in &env {
+                cmd.env(key, value);
+            }
+            return cmd.output().map_err(|e| MoonshineError::Io(e));
+        }
+
         // Method 1: Try direct execution first
         let mut cmd = Command::new(&self.wine_bin);
         cmd.arg(&unix_path);
@@ -756,8 +770,17 @@ impl WineRunner {
         tracing::debug!(wine = %self.wine_bin.display(), "Using Wine binary");
         tracing::debug!(hid_controllers = prefix.config.enable_hid_controllers, "HID controller setting");
 
+        // Detect .msi installers — need msiexec /i instead of direct execution
+        let is_msi = program_path.extension()
+            .map_or(false, |ext| ext.eq_ignore_ascii_case("msi"));
+
         let mut cmd = Command::new(&self.wine_bin);
-        cmd.arg(&unix_path);
+        if is_msi {
+            tracing::debug!("Detected .msi installer, using msiexec /i");
+            cmd.arg("msiexec").arg("/i").arg(&unix_path);
+        } else {
+            cmd.arg(&unix_path);
+        }
         for (key, value) in &env {
             cmd.env(key, value);
         }

@@ -3,6 +3,24 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 static LAST_INSTALL_FAILED: AtomicBool = AtomicBool::new(false);
 
+/// Initialize tracing once. Safe to call multiple times.
+/// Sends Rust logs to stderr so Swift can capture them during downloads.
+pub fn init_logging() {
+    use std::sync::Once;
+    static INIT: Once = Once::new();
+    INIT.call_once(|| {
+        tracing_subscriber::fmt()
+            .with_env_filter(
+                tracing_subscriber::EnvFilter::try_from_default_env()
+                    .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info")),
+            )
+            .with_target(false)
+            .with_ansi(false)
+            .init();
+    });
+}
+
+
 #[swift_bridge::bridge]
 mod ffi {
     enum SwiftWindowsVersion {
@@ -64,6 +82,7 @@ mod ffi {
         fn install_steam(&self) -> String;
         fn launch_steam(&self) -> u32;
         fn run_winetricks(&self, verb: &str) -> String;
+        fn run_winetricks_preset(&self, preset: &str) -> String;
         fn find_steam_exe(&self) -> Option<String>;
     }
 
@@ -76,6 +95,7 @@ mod ffi {
     }
 
     extern "Rust" {
+        fn init_logging();
         fn detect_wine() -> Option<String>;
         fn wine_version() -> Option<String>;
         fn get_base_dir() -> String;
@@ -363,6 +383,17 @@ impl RustPrefix {
             Err(e) => {
                 let msg = format!("winetricks {} failed: {}", verb, e);
                 tracing::error!(verb = %verb, error = %e, "winetricks failed");
+                msg
+            }
+        }
+    }
+
+    pub fn run_winetricks_preset(&self, preset: &str) -> String {
+        match moonshine_core::installer::run_winetricks_preset(&self.inner, preset) {
+            Ok(output) => output,
+            Err(e) => {
+                let msg = format!("preset {} failed: {}", preset, e);
+                tracing::error!(preset = %preset, error = %e, "winetricks preset failed");
                 msg
             }
         }

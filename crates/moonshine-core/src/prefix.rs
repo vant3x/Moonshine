@@ -104,25 +104,34 @@ impl Prefix {
     pub fn list_executables(&self) -> Result<Vec<PathBuf>> {
         let mut exes = Vec::new();
 
-        // Search in BOTH "Program Files" and "Program Files (x86)"
-        let search_dirs = [
-            self.drive_c().join("Program Files"),
-            self.drive_c().join("Program Files (x86)"),
+        // Scan all of drive_c, but skip system directories that contain
+        // hundreds of irrelevant .exe files (system DLLs, installers, etc.)
+        let drive_c = self.drive_c();
+        let skip_dirs: &[&str] = &[
+            "windows",       // System DLLs, regedit, notepad, etc.
+            "users",          // User profile temp/installer cruft
+            "ProgramData",    // Installer caches, package data
         ];
 
-        for programs_dir in &search_dirs {
-            if !programs_dir.exists() {
-                continue;
-            }
-
-            for entry in walkdir::WalkDir::new(programs_dir)
-                .into_iter()
-                .filter_map(|e| e.ok())
-            {
-                let path = entry.path().to_path_buf();
-                if path.extension().map_or(false, |ext| ext == "exe") {
-                    exes.push(path);
+        for entry in walkdir::WalkDir::new(&drive_c)
+            .into_iter()
+            .filter_entry(|e| {
+                if e.file_type().is_dir() {
+                    // Skip system directories at the drive_c root level
+                    if let Some(name) = e.file_name().to_str() {
+                        // Only skip at root level (depth 1 = direct children of drive_c)
+                        if e.depth() == 1 {
+                            return !skip_dirs.iter().any(|s| s.eq_ignore_ascii_case(name));
+                        }
+                    }
                 }
+                true
+            })
+            .filter_map(|e| e.ok())
+        {
+            let path = entry.path().to_path_buf();
+            if path.extension().map_or(false, |ext| ext == "exe") {
+                exes.push(path);
             }
         }
 
@@ -326,6 +335,39 @@ mod tests {
         let prefix = Prefix::new("TestBottle", &dir).unwrap();
         let exes = prefix.list_executables().unwrap();
         assert!(exes.is_empty());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_prefix_list_executables_scans_all_drive_c_and_skips_system() {
+        let dir = temp_dir();
+        let prefix = Prefix::new("TestBottle", &dir).unwrap();
+
+        // Game installed in a custom location (not Program Files)
+        fs::create_dir_all(prefix.drive_c().join("Games/MyGame")).unwrap();
+        fs::write(prefix.drive_c().join("Games/MyGame/mygame.exe"), "").unwrap();
+
+        // Launcher installed in Program Files
+        fs::create_dir_all(prefix.drive_c().join("Program Files (x86)/Epic/Launcher/Portal/Binaries/Win32")).unwrap();
+        fs::write(prefix.drive_c().join("Program Files (x86)/Epic/Launcher/Portal/Binaries/Win32/EpicGamesLauncher.exe"), "").unwrap();
+
+        // System .exe files that should be EXCLUDED
+        fs::create_dir_all(prefix.drive_c().join("windows/system32")).unwrap();
+        fs::write(prefix.drive_c().join("windows/system32/notepad.exe"), "").unwrap();
+        fs::create_dir_all(prefix.drive_c().join("users/Public/AppData/Local/Temp")).unwrap();
+        fs::write(prefix.drive_c().join("users/Public/AppData/Local/Temp/installer.exe"), "").unwrap();
+
+        let exes = prefix.list_executables().unwrap();
+        let names: Vec<String> = exes.iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().to_string())
+            .collect();
+
+        // Should find the game and launcher, but NOT system exes
+        assert!(names.contains(&"mygame.exe".to_string()), "Should find game in custom dir");
+        assert!(names.contains(&"EpicGamesLauncher.exe".to_string()), "Should find launcher in Program Files");
+        assert!(!names.contains(&"notepad.exe".to_string()), "Should skip windows/ directory");
+        assert!(!names.contains(&"installer.exe".to_string()), "Should skip users/ directory");
+
         fs::remove_dir_all(&dir).unwrap();
     }
 
