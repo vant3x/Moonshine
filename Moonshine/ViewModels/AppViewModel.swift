@@ -25,6 +25,8 @@ class AppViewModel: ObservableObject {
     @Published var wineDetected = false
     @Published var wineVersion: String?
     @Published var gptkInstalled = false
+    @Published var runtimeState = "{\"runtimes\":[]}"
+    @Published var prefixIssues = "[]"
     @Published var baseDir = ""
     @Published var isDownloading = false
     @Published var downloadStatus = ""
@@ -60,6 +62,8 @@ class AppViewModel: ObservableObject {
         wineDetected = detect_wine() != nil || is_wine_installed()
         wineVersion = wine_version()?.toString()
         gptkInstalled = checkGptkInstalled()
+        runtimeState = runtime_state_json().toString()
+        prefixIssues = prefix_issues_json().toString()
         hasWineMsvcrtBug = has_wine_msvcrt_bug()
         if hasWineMsvcrtBug {
             print("[Moonshine] WARNING: Wine 11.0 msvcrt bug detected! All wine commands will crash.")
@@ -169,7 +173,7 @@ class AppViewModel: ObservableObject {
 
     func createPrefix(name: String, windowsVersion: String, graphicsBackend: String) {
         guard let prefix = RustPrefix(name) else {
-            print("[Moonshine] Failed to create prefix: \(name)")
+            installStatus = "Could not create prefix. A valid Wine runtime is required, and the name must be unique."
             return
         }
         prefix.set_windows_version(windowsVersion == "win10" ? .Win10 : .Win11)

@@ -1,6 +1,7 @@
 use crate::error::{MoonshineError, Result};
+use sha2::{Digest, Sha256};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 
 pub fn download_file(url: &str, dest: &PathBuf) -> Result<PathBuf> {
@@ -48,23 +49,38 @@ pub fn extract_tar_gz(archive: &PathBuf, dest: &PathBuf) -> Result<()> {
     let file = fs::File::open(archive)?;
     let decoder = flate2::read::GzDecoder::new(file);
     let mut archive = tar::Archive::new(decoder);
-    archive.unpack(dest)?;
+    unpack_tar_safely(&mut archive, dest)?;
     Ok(())
 }
 
 pub fn extract_tar_xz(archive: &PathBuf, dest: &PathBuf) -> Result<()> {
-    let output = std::process::Command::new("tar")
-        .arg("-xJf")
-        .arg(archive)
-        .arg("-C")
-        .arg(dest)
-        .output()
-        .map_err(|e| MoonshineError::DownloadFailed(format!("tar failed: {}", e)))?;
+    let file = fs::File::open(archive)?;
+    let decoder = xz2::read::XzDecoder::new(file);
+    let mut archive = tar::Archive::new(decoder);
+    unpack_tar_safely(&mut archive, dest)?;
+    Ok(())
+}
 
-    if !output.status.success() {
-        return Err(MoonshineError::DownloadFailed(
-            String::from_utf8_lossy(&output.stderr).to_string(),
-        ));
+fn safe_archive_path(path: &Path) -> Result<()> {
+    if path.is_absolute()
+        || path.components().any(|component| {
+            matches!(component, Component::ParentDir | Component::RootDir | Component::Prefix(_))
+        })
+    {
+        return Err(MoonshineError::UnsafeArchiveEntry(path.display().to_string()));
+    }
+    Ok(())
+}
+
+fn unpack_tar_safely<R: std::io::Read>(archive: &mut tar::Archive<R>, dest: &Path) -> Result<()> {
+    for entry in archive.entries()? {
+        let mut entry = entry?;
+        let path = entry.path()?.into_owned();
+        safe_archive_path(&path)?;
+        if let Some(link) = entry.link_name()? {
+            safe_archive_path(&link)?;
+        }
+        entry.unpack_in(dest)?;
     }
     Ok(())
 }
@@ -73,9 +89,66 @@ pub fn extract_zip(archive: &PathBuf, dest: &PathBuf) -> Result<()> {
     let file = fs::File::open(archive)?;
     let mut zip = zip::ZipArchive::new(file)
         .map_err(|e| MoonshineError::DownloadFailed(e.to_string()))?;
-    zip.extract(dest)
-        .map_err(|e| MoonshineError::DownloadFailed(e.to_string()))?;
+    for index in 0..zip.len() {
+        let mut entry = zip
+            .by_index(index)
+            .map_err(|e| MoonshineError::DownloadFailed(e.to_string()))?;
+        let path = entry
+            .enclosed_name()
+            .ok_or_else(|| MoonshineError::UnsafeArchiveEntry(entry.name().to_string()))?
+            .to_path_buf();
+        safe_archive_path(&path)?;
+        let output_path = dest.join(path);
+        if entry.is_dir() {
+            fs::create_dir_all(output_path)?;
+            continue;
+        }
+        if let Some(parent) = output_path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let mut output = fs::File::create(output_path)?;
+        std::io::copy(&mut entry, &mut output)?;
+    }
     Ok(())
+}
+
+pub fn sha256_file(path: &Path) -> Result<String> {
+    let mut file = fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    std::io::copy(&mut file, &mut hasher)?;
+    Ok(format!("{:x}", hasher.finalize()))
+}
+
+pub fn verify_sha256(path: &Path, expected: &str) -> Result<()> {
+    let actual = sha256_file(path)?;
+    if actual.eq_ignore_ascii_case(expected) {
+        Ok(())
+    } else {
+        Err(MoonshineError::ChecksumMismatch {
+            expected: expected.to_ascii_lowercase(),
+            actual,
+        })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn checksum_verification_rejects_invalid_checksum() {
+        let path = std::env::temp_dir().join(format!("moonshine-checksum-{}", uuid::Uuid::new_v4()));
+        fs::write(&path, b"runtime").unwrap();
+
+        assert!(matches!(verify_sha256(&path, "00"), Err(MoonshineError::ChecksumMismatch { .. })));
+        fs::remove_file(path).unwrap();
+    }
+
+    #[test]
+    fn archive_path_traversal_is_rejected() {
+        assert!(safe_archive_path(Path::new("../outside")).is_err());
+        assert!(safe_archive_path(Path::new("bin/wine64")).is_ok());
+    }
 }
 
 pub fn get_libraries_dir() -> Result<PathBuf> {

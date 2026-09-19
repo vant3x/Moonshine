@@ -13,6 +13,9 @@ public func get_base_dir() -> RustString {
 public func list_all_prefixes() -> RustVec<RustPrefix> {
     RustVec(ptr: __swift_bridge__$list_all_prefixes())
 }
+public func prefix_issues_json() -> RustString {
+    RustString(ptr: __swift_bridge__$prefix_issues_json())
+}
 public func download_file<GenericToRustStr: ToRustStr>(_ url: GenericToRustStr, _ dest: GenericToRustStr) -> Bool {
     return dest.toRustStr({ destAsRustStr in
         return url.toRustStr({ urlAsRustStr in
@@ -31,8 +34,18 @@ public func install_wine<GenericToRustStr: ToRustStr>(_ url: GenericToRustStr) -
         __swift_bridge__$install_wine(urlAsRustStr)
     })
 }
+public func install_wine_verified<GenericToRustStr: ToRustStr>(_ url: GenericToRustStr, _ expected_sha256: GenericToRustStr) -> Bool {
+    return expected_sha256.toRustStr({ expected_sha256AsRustStr in
+        return url.toRustStr({ urlAsRustStr in
+        __swift_bridge__$install_wine_verified(urlAsRustStr, expected_sha256AsRustStr)
+    })
+    })
+}
 public func is_wine_installed() -> Bool {
     __swift_bridge__$is_wine_installed()
+}
+public func runtime_state_json() -> RustString {
+    RustString(ptr: __swift_bridge__$runtime_state_json())
 }
 public func last_install_error() -> Bool {
     __swift_bridge__$last_install_error()
@@ -297,6 +310,86 @@ extension SwiftSyncMode: Vectorizable {
         __swift_bridge__$Vec_SwiftSyncMode$len(vecPtr)
     }
 }
+public enum SwiftWindowsArchitecture {
+    case Win64
+    case Win32
+}
+extension SwiftWindowsArchitecture {
+    func intoFfiRepr() -> __swift_bridge__$SwiftWindowsArchitecture {
+        switch self {
+            case SwiftWindowsArchitecture.Win64:
+                return __swift_bridge__$SwiftWindowsArchitecture(tag: __swift_bridge__$SwiftWindowsArchitecture$Win64)
+            case SwiftWindowsArchitecture.Win32:
+                return __swift_bridge__$SwiftWindowsArchitecture(tag: __swift_bridge__$SwiftWindowsArchitecture$Win32)
+        }
+    }
+}
+extension __swift_bridge__$SwiftWindowsArchitecture {
+    func intoSwiftRepr() -> SwiftWindowsArchitecture {
+        switch self.tag {
+            case __swift_bridge__$SwiftWindowsArchitecture$Win64:
+                return SwiftWindowsArchitecture.Win64
+            case __swift_bridge__$SwiftWindowsArchitecture$Win32:
+                return SwiftWindowsArchitecture.Win32
+            default:
+                fatalError("Unreachable")
+        }
+    }
+}
+extension __swift_bridge__$Option$SwiftWindowsArchitecture {
+    @inline(__always)
+    func intoSwiftRepr() -> Optional<SwiftWindowsArchitecture> {
+        if self.is_some {
+            return self.val.intoSwiftRepr()
+        } else {
+            return nil
+        }
+    }
+    @inline(__always)
+    static func fromSwiftRepr(_ val: Optional<SwiftWindowsArchitecture>) -> __swift_bridge__$Option$SwiftWindowsArchitecture {
+        if let v = val {
+            return __swift_bridge__$Option$SwiftWindowsArchitecture(is_some: true, val: v.intoFfiRepr())
+        } else {
+            return __swift_bridge__$Option$SwiftWindowsArchitecture(is_some: false, val: __swift_bridge__$SwiftWindowsArchitecture())
+        }
+    }
+}
+extension SwiftWindowsArchitecture: Vectorizable {
+    public static func vecOfSelfNew() -> UnsafeMutableRawPointer {
+        __swift_bridge__$Vec_SwiftWindowsArchitecture$new()
+    }
+
+    public static func vecOfSelfFree(vecPtr: UnsafeMutableRawPointer) {
+        __swift_bridge__$Vec_SwiftWindowsArchitecture$drop(vecPtr)
+    }
+
+    public static func vecOfSelfPush(vecPtr: UnsafeMutableRawPointer, value: Self) {
+        __swift_bridge__$Vec_SwiftWindowsArchitecture$push(vecPtr, value.intoFfiRepr())
+    }
+
+    public static func vecOfSelfPop(vecPtr: UnsafeMutableRawPointer) -> Optional<Self> {
+        let maybeEnum = __swift_bridge__$Vec_SwiftWindowsArchitecture$pop(vecPtr)
+        return maybeEnum.intoSwiftRepr()
+    }
+
+    public static func vecOfSelfGet(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<Self> {
+        let maybeEnum = __swift_bridge__$Vec_SwiftWindowsArchitecture$get(vecPtr, index)
+        return maybeEnum.intoSwiftRepr()
+    }
+
+    public static func vecOfSelfGetMut(vecPtr: UnsafeMutableRawPointer, index: UInt) -> Optional<Self> {
+        let maybeEnum = __swift_bridge__$Vec_SwiftWindowsArchitecture$get_mut(vecPtr, index)
+        return maybeEnum.intoSwiftRepr()
+    }
+
+    public static func vecOfSelfAsPtr(vecPtr: UnsafeMutableRawPointer) -> UnsafePointer<Self> {
+        UnsafePointer<Self>(OpaquePointer(__swift_bridge__$Vec_SwiftWindowsArchitecture$as_ptr(vecPtr)))
+    }
+
+    public static func vecOfSelfLen(vecPtr: UnsafeMutableRawPointer) -> UInt {
+        __swift_bridge__$Vec_SwiftWindowsArchitecture$len(vecPtr)
+    }
+}
 public enum SwiftWineBackend {
     case Auto
     case WineHQ
@@ -431,6 +524,10 @@ extension RustPrefixRefMut {
         __swift_bridge__$RustPrefix$set_sync_mode(ptr, mode.intoFfiRepr())
     }
 
+    public func set_architecture(_ architecture: SwiftWindowsArchitecture) -> Bool {
+        __swift_bridge__$RustPrefix$set_architecture(ptr, architecture.intoFfiRepr())
+    }
+
     public func set_metal_fx(_ enabled: Bool) {
         __swift_bridge__$RustPrefix$set_metal_fx(ptr, enabled)
     }
@@ -455,6 +552,20 @@ extension RustPrefixRefMut {
 
     public func set_reduce_wine_debug(_ enabled: Bool) {
         __swift_bridge__$RustPrefix$set_reduce_wine_debug(ptr, enabled)
+    }
+
+    public func set_env_var<GenericToRustStr: ToRustStr>(_ key: GenericToRustStr, _ value: GenericToRustStr) -> Bool {
+        return value.toRustStr({ valueAsRustStr in
+            return key.toRustStr({ keyAsRustStr in
+            __swift_bridge__$RustPrefix$set_env_var(ptr, keyAsRustStr, valueAsRustStr)
+        })
+        })
+    }
+
+    public func remove_env_var<GenericToRustStr: ToRustStr>(_ key: GenericToRustStr) -> Bool {
+        return key.toRustStr({ keyAsRustStr in
+            __swift_bridge__$RustPrefix$remove_env_var(ptr, keyAsRustStr)
+        })
     }
 }
 public class RustPrefixRef {
@@ -489,6 +600,10 @@ extension RustPrefixRef {
         __swift_bridge__$RustPrefix$get_sync_mode(ptr).intoSwiftRepr()
     }
 
+    public func get_architecture() -> SwiftWindowsArchitecture {
+        __swift_bridge__$RustPrefix$get_architecture(ptr).intoSwiftRepr()
+    }
+
     public func get_metal_fx() -> Bool {
         __swift_bridge__$RustPrefix$get_metal_fx(ptr)
     }
@@ -513,12 +628,30 @@ extension RustPrefixRef {
         __swift_bridge__$RustPrefix$get_reduce_wine_debug(ptr)
     }
 
+    public func game_profile_json<GenericToRustStr: ToRustStr>(_ program_path: GenericToRustStr) -> RustString {
+        return program_path.toRustStr({ program_pathAsRustStr in
+            RustString(ptr: __swift_bridge__$RustPrefix$game_profile_json(ptr, program_pathAsRustStr))
+        })
+    }
+
     public func save() -> Bool {
         __swift_bridge__$RustPrefix$save(ptr)
     }
 
     public func delete_prefix() -> Bool {
         __swift_bridge__$RustPrefix$delete_prefix(ptr)
+    }
+
+    public func backup_prefix<GenericToRustStr: ToRustStr>(_ destination: GenericToRustStr) -> Bool {
+        return destination.toRustStr({ destinationAsRustStr in
+            __swift_bridge__$RustPrefix$backup_prefix(ptr, destinationAsRustStr)
+        })
+    }
+
+    public func restore_prefix<GenericToRustStr: ToRustStr>(_ backup_path: GenericToRustStr) -> Bool {
+        return backup_path.toRustStr({ backup_pathAsRustStr in
+            __swift_bridge__$RustPrefix$restore_prefix(ptr, backup_pathAsRustStr)
+        })
     }
 
     public func reinit_prefix() -> RustString {

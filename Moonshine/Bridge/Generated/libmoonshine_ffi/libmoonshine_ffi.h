@@ -40,6 +40,19 @@ __swift_bridge__$Option$SwiftSyncMode __swift_bridge__$Vec_SwiftSyncMode$get_mut
 uintptr_t __swift_bridge__$Vec_SwiftSyncMode$len(void* vec_ptr);
 void* __swift_bridge__$Vec_SwiftSyncMode$as_ptr(void* vec_ptr);
 
+typedef enum __swift_bridge__$SwiftWindowsArchitectureTag { __swift_bridge__$SwiftWindowsArchitecture$Win64, __swift_bridge__$SwiftWindowsArchitecture$Win32, } __swift_bridge__$SwiftWindowsArchitectureTag;
+typedef struct __swift_bridge__$SwiftWindowsArchitecture { __swift_bridge__$SwiftWindowsArchitectureTag tag; } __swift_bridge__$SwiftWindowsArchitecture;
+typedef struct __swift_bridge__$Option$SwiftWindowsArchitecture { bool is_some; __swift_bridge__$SwiftWindowsArchitecture val; } __swift_bridge__$Option$SwiftWindowsArchitecture;
+
+void* __swift_bridge__$Vec_SwiftWindowsArchitecture$new(void);
+void __swift_bridge__$Vec_SwiftWindowsArchitecture$drop(void* vec_ptr);
+void __swift_bridge__$Vec_SwiftWindowsArchitecture$push(void* vec_ptr, __swift_bridge__$SwiftWindowsArchitecture item);
+__swift_bridge__$Option$SwiftWindowsArchitecture __swift_bridge__$Vec_SwiftWindowsArchitecture$pop(void* vec_ptr);
+__swift_bridge__$Option$SwiftWindowsArchitecture __swift_bridge__$Vec_SwiftWindowsArchitecture$get(void* vec_ptr, uintptr_t index);
+__swift_bridge__$Option$SwiftWindowsArchitecture __swift_bridge__$Vec_SwiftWindowsArchitecture$get_mut(void* vec_ptr, uintptr_t index);
+uintptr_t __swift_bridge__$Vec_SwiftWindowsArchitecture$len(void* vec_ptr);
+void* __swift_bridge__$Vec_SwiftWindowsArchitecture$as_ptr(void* vec_ptr);
+
 typedef enum __swift_bridge__$SwiftWineBackendTag { __swift_bridge__$SwiftWineBackend$Auto, __swift_bridge__$SwiftWineBackend$WineHQ, __swift_bridge__$SwiftWineBackend$GPTK, __swift_bridge__$SwiftWineBackend$CrossOver, __swift_bridge__$SwiftWineBackend$Custom, } __swift_bridge__$SwiftWineBackendTag;
 typedef struct __swift_bridge__$SwiftWineBackend { __swift_bridge__$SwiftWineBackendTag tag; } __swift_bridge__$SwiftWineBackend;
 typedef struct __swift_bridge__$Option$SwiftWineBackend { bool is_some; __swift_bridge__$SwiftWineBackend val; } __swift_bridge__$Option$SwiftWineBackend;
@@ -87,6 +100,8 @@ struct __swift_bridge__$SwiftGraphicsBackend __swift_bridge__$RustPrefix$get_gra
 void __swift_bridge__$RustPrefix$set_graphics_backend(void* self, struct __swift_bridge__$SwiftGraphicsBackend backend);
 struct __swift_bridge__$SwiftSyncMode __swift_bridge__$RustPrefix$get_sync_mode(void* self);
 void __swift_bridge__$RustPrefix$set_sync_mode(void* self, struct __swift_bridge__$SwiftSyncMode mode);
+struct __swift_bridge__$SwiftWindowsArchitecture __swift_bridge__$RustPrefix$get_architecture(void* self);
+bool __swift_bridge__$RustPrefix$set_architecture(void* self, struct __swift_bridge__$SwiftWindowsArchitecture architecture);
 bool __swift_bridge__$RustPrefix$get_metal_fx(void* self);
 void __swift_bridge__$RustPrefix$set_metal_fx(void* self, bool enabled);
 bool __swift_bridge__$RustPrefix$get_dxvk_hud(void* self);
@@ -99,8 +114,13 @@ bool __swift_bridge__$RustPrefix$get_hid_controllers(void* self);
 void __swift_bridge__$RustPrefix$set_hid_controllers(void* self, bool enabled);
 bool __swift_bridge__$RustPrefix$get_reduce_wine_debug(void* self);
 void __swift_bridge__$RustPrefix$set_reduce_wine_debug(void* self, bool enabled);
+bool __swift_bridge__$RustPrefix$set_env_var(void* self, struct RustStr key, struct RustStr value);
+bool __swift_bridge__$RustPrefix$remove_env_var(void* self, struct RustStr key);
+void* __swift_bridge__$RustPrefix$game_profile_json(void* self, struct RustStr program_path);
 bool __swift_bridge__$RustPrefix$save(void* self);
 bool __swift_bridge__$RustPrefix$delete_prefix(void* self);
+bool __swift_bridge__$RustPrefix$backup_prefix(void* self, struct RustStr destination);
+bool __swift_bridge__$RustPrefix$restore_prefix(void* self, struct RustStr backup_path);
 void* __swift_bridge__$RustPrefix$reinit_prefix(void* self);
 void* __swift_bridge__$RustPrefix$list_executables(void* self);
 bool __swift_bridge__$RustPrefix$run_program(void* self, struct RustStr program_path);
@@ -120,11 +140,14 @@ void* __swift_bridge__$detect_wine(void);
 void* __swift_bridge__$wine_version(void);
 void* __swift_bridge__$get_base_dir(void);
 void* __swift_bridge__$list_all_prefixes(void);
+void* __swift_bridge__$prefix_issues_json(void);
 bool __swift_bridge__$download_file(struct RustStr url, struct RustStr dest);
 void* __swift_bridge__$get_wine_dir(void);
 void* __swift_bridge__$get_gptk_dir(void);
 bool __swift_bridge__$install_wine(struct RustStr url);
+bool __swift_bridge__$install_wine_verified(struct RustStr url, struct RustStr expected_sha256);
 bool __swift_bridge__$is_wine_installed(void);
+void* __swift_bridge__$runtime_state_json(void);
 bool __swift_bridge__$last_install_error(void);
 void* __swift_bridge__$get_available_verbs(void);
 void* __swift_bridge__$detect_all_wine_backends(void);

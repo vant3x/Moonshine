@@ -1,7 +1,10 @@
-use crate::config::BottleConfig;
+use crate::config::{BottleConfig, WindowsArchitecture};
 use crate::error::{Result, MoonshineError};
+use crate::game::GameProfile;
+use crate::process::ProgramRequest;
+use crate::runtime::RuntimeManager;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
 #[derive(Debug, Clone)]
@@ -14,6 +17,10 @@ pub struct Prefix {
 
 impl Prefix {
     pub fn new(name: &str, base_dir: &PathBuf) -> Result<Self> {
+        validate_prefix_name(name)?;
+        if prefix_name_exists(name, base_dir)? {
+            return Err(MoonshineError::PrefixAlreadyExists(name.to_string()));
+        }
         let id = Uuid::new_v4().to_string();
         let prefix_dir = base_dir.join(&id);
 
@@ -38,14 +45,42 @@ impl Prefix {
         })
     }
 
+    pub fn new_with_runtime(name: &str, base_dir: &PathBuf, mut config: BottleConfig) -> Result<Self> {
+        validate_prefix_name(name)?;
+        if prefix_name_exists(name, base_dir)? {
+            return Err(MoonshineError::PrefixAlreadyExists(name.to_string()));
+        }
+        let runtime_path = RuntimeManager::selected_path(&config)?;
+        config.name = name.to_string();
+        config.wine_path = Some(runtime_path.to_string_lossy().to_string());
+        Self::new_with_config(name, base_dir, config)
+    }
+
+    fn new_with_config(name: &str, base_dir: &PathBuf, config: BottleConfig) -> Result<Self> {
+        let id = Uuid::new_v4().to_string();
+        let prefix_dir = base_dir.join(&id);
+        fs::create_dir_all(&prefix_dir)?;
+        fs::create_dir_all(prefix_dir.join("drive_c/Program Files"))?;
+        fs::create_dir_all(prefix_dir.join("drive_c/users"))?;
+        config.save(&prefix_dir)?;
+        Ok(Self { id, name: name.to_string(), path: prefix_dir, config })
+    }
+
     pub fn load(id: &str, base_dir: &PathBuf) -> Result<Self> {
+        if id.is_empty() || id == "." || id == ".." || id.contains('/') || id.contains('\\') {
+            return Err(MoonshineError::InvalidPath(base_dir.join(id)));
+        }
         let prefix_dir = base_dir.join(id);
 
         if !prefix_dir.exists() {
             return Err(MoonshineError::PrefixNotFound(id.to_string()));
         }
+        if !prefix_dir.is_dir() || !prefix_dir.join("drive_c").is_dir() {
+            return Err(MoonshineError::PrefixCorrupt(id.to_string()));
+        }
 
-        let config = BottleConfig::load(&prefix_dir)?;
+        let config = BottleConfig::load(&prefix_dir)
+            .map_err(|_| MoonshineError::PrefixCorrupt(id.to_string()))?;
 
         Ok(Self {
             id: id.to_string(),
@@ -77,6 +112,9 @@ impl Prefix {
     }
 
     pub fn delete(&self) -> Result<()> {
+        if self.path.parent().is_none() || self.path.file_name().map(|name| name == "").unwrap_or(true) {
+            return Err(MoonshineError::InvalidPath(self.path.clone()));
+        }
         if self.path.exists() {
             fs::remove_dir_all(&self.path)?;
         }
@@ -84,6 +122,7 @@ impl Prefix {
     }
 
     pub fn update_config(&mut self, config: BottleConfig) -> Result<()> {
+        validate_architecture(&config)?;
         self.config = config;
         self.config.save(&self.path)?;
         Ok(())
@@ -91,6 +130,41 @@ impl Prefix {
 
     pub fn save_config(&self) -> Result<()> {
         self.config.save(&self.path)
+    }
+
+    pub fn set_architecture(&mut self, architecture: WindowsArchitecture) -> Result<()> {
+        let mut config = self.config.clone();
+        config.architecture = architecture;
+        validate_architecture(&config)?;
+        self.update_config(config)
+    }
+
+    pub fn backup_to(&self, backup_root: &Path) -> Result<PathBuf> {
+        let backup_path = backup_root.join(&self.id);
+        if backup_path.exists() {
+            return Err(MoonshineError::PrefixAlreadyExists(backup_path.display().to_string()));
+        }
+        copy_tree(&self.path, &backup_path)?;
+        Ok(backup_path)
+    }
+
+    pub fn restore_from(&self, backup_path: &Path) -> Result<()> {
+        let restored = backup_path.join("bottle.json");
+        if !restored.is_file() || !backup_path.join("drive_c").is_dir() {
+            return Err(MoonshineError::PrefixCorrupt(backup_path.display().to_string()));
+        }
+        let config = BottleConfig::load(&backup_path.to_path_buf())?;
+        validate_prefix_name(&config.name)?;
+        let staging = self.path.with_extension("restore-tmp");
+        if staging.exists() {
+            fs::remove_dir_all(&staging)?;
+        }
+        copy_tree(backup_path, &staging)?;
+        if self.path.exists() {
+            fs::remove_dir_all(&self.path)?;
+        }
+        fs::rename(staging, &self.path)?;
+        Ok(())
     }
 
     pub fn drive_c(&self) -> PathBuf {
@@ -158,6 +232,85 @@ impl Prefix {
         }
         None
     }
+
+    pub fn program_request(&self, program_path: impl Into<PathBuf>) -> Result<ProgramRequest> {
+        ProgramRequest::new(program_path)
+    }
+
+    pub fn game_profile(&self, program_path: impl Into<PathBuf>) -> Result<GameProfile> {
+        GameProfile::new(&self.id, &program_path.into())
+    }
+
+    pub fn list_issues(base_dir: &Path) -> Result<Vec<String>> {
+        let mut issues = Vec::new();
+        if !base_dir.exists() {
+            return Ok(issues);
+        }
+        for entry in fs::read_dir(base_dir)? {
+            let entry = entry?;
+            if entry.file_type()?.is_dir() {
+                let id = entry.file_name().to_string_lossy().to_string();
+                if let Err(error) = Self::load(&id, &base_dir.to_path_buf()) {
+                    issues.push(format!("{}: {}", id, error));
+                }
+            }
+        }
+        Ok(issues)
+    }
+}
+
+fn validate_prefix_name(name: &str) -> Result<()> {
+    if name.trim().is_empty() || name.contains('/') || name.contains('\\') || name.contains('\0') {
+        return Err(MoonshineError::InvalidPrefixName(name.to_string()));
+    }
+    Ok(())
+}
+
+fn prefix_name_exists(name: &str, base_dir: &Path) -> Result<bool> {
+    if !base_dir.exists() {
+        return Ok(false);
+    }
+    for entry in fs::read_dir(base_dir)? {
+        let entry = entry?;
+        if entry.file_type()?.is_dir() {
+            if let Ok(config) = BottleConfig::load(&entry.path()) {
+                if config.name == name {
+                    return Ok(true);
+                }
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn validate_architecture(config: &BottleConfig) -> Result<()> {
+    if config.architecture == WindowsArchitecture::Win32 {
+        let runner = crate::wine::WineRunner::detect_for_config(config)
+            .map_err(|_| MoonshineError::Config("Win32 prefixes require a selected runtime".to_string()))?;
+        if !runner.backend().has_wo64() {
+            return Err(MoonshineError::Config("selected runtime does not support Win32 prefixes".to_string()));
+        }
+    }
+    Ok(())
+}
+
+fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
+    fs::create_dir_all(destination)?;
+    for entry in fs::read_dir(source)? {
+        let entry = entry?;
+        let source_path = entry.path();
+        let destination_path = destination.join(entry.file_name());
+        let file_type = entry.file_type()?;
+        if file_type.is_symlink() {
+            let target = fs::read_link(source_path)?;
+            std::os::unix::fs::symlink(target, destination_path)?;
+        } else if file_type.is_dir() {
+            copy_tree(&source_path, &destination_path)?;
+        } else {
+            fs::copy(source_path, destination_path)?;
+        }
+    }
+    Ok(())
 }
 
 pub fn get_real_home() -> std::path::PathBuf {
@@ -219,6 +372,14 @@ mod tests {
     }
 
     #[test]
+    fn test_duplicate_prefix_name_is_rejected() {
+        let dir = temp_dir();
+        Prefix::new("Same Name", &dir).unwrap();
+        assert!(matches!(Prefix::new("Same Name", &dir), Err(MoonshineError::PrefixAlreadyExists(_))));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
     fn test_prefix_load() {
         let dir = temp_dir();
         let created = Prefix::new("TestBottle", &dir).unwrap();
@@ -235,6 +396,49 @@ mod tests {
         let dir = temp_dir();
         let result = Prefix::load("nonexistent", &dir);
         assert!(result.is_err());
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_corrupt_prefix_is_rejected() {
+        let dir = temp_dir();
+        let corrupt = dir.join("corrupt");
+        fs::create_dir_all(&corrupt).unwrap();
+        fs::write(corrupt.join("bottle.json"), b"not json").unwrap();
+        assert!(matches!(Prefix::load("corrupt", &dir), Err(MoonshineError::PrefixCorrupt(_))));
+        fs::remove_dir_all(&dir).unwrap();
+    }
+
+    #[test]
+    fn test_backup_and_restore_preserve_prefix_files() {
+        let dir = temp_dir();
+        let backup_root = temp_dir();
+        let prefix = Prefix::new("Backup", &dir).unwrap();
+        let marker = prefix.drive_c().join("marker.txt");
+        fs::write(&marker, b"original").unwrap();
+        let backup = prefix.backup_to(&backup_root).unwrap();
+        fs::write(&marker, b"changed").unwrap();
+
+        prefix.restore_from(&backup).unwrap();
+        assert_eq!(fs::read(marker).unwrap(), b"original");
+        fs::remove_dir_all(dir).unwrap();
+        fs::remove_dir_all(backup_root).unwrap();
+    }
+
+    #[test]
+    fn test_invalid_runtime_is_rejected_without_fallback() {
+        let dir = temp_dir();
+        let mut config = BottleConfig::default();
+        config.wine_path = Some(dir.join("missing/bin/wine64").to_string_lossy().to_string());
+        assert!(Prefix::new_with_runtime("Invalid Runtime", &dir, config).is_err());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn test_prefix_load_rejects_path_traversal() {
+        let dir = temp_dir();
+        let result = Prefix::load("../outside", &dir);
+        assert!(matches!(result, Err(MoonshineError::InvalidPath(_))));
         fs::remove_dir_all(&dir).unwrap();
     }
 

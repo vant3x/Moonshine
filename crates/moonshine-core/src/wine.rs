@@ -704,6 +704,8 @@ impl WineRunner {
     /// Run a Windows program through Wine and **wait** for it to exit.
     /// Use this for installers where you need to know when they finish.
     pub fn run_program(&self, prefix: &Prefix, program_path: &PathBuf) -> Result<Output> {
+        let request = prefix.program_request(program_path.clone())?;
+        let program_path = &request.executable;
         let mut env = Self::build_env(prefix, &prefix.config, &self.backend);
 
         let home = crate::prefix::get_real_home();
@@ -757,6 +759,8 @@ impl WineRunner {
     /// Use this for Steam, games, and any long-running Windows apps.
     /// Returns the child process PID so the caller can track or kill it.
     pub fn launch_program(&self, prefix: &Prefix, program_path: &PathBuf) -> Result<u32> {
+        let request = prefix.program_request(program_path.clone())?;
+        let program_path = &request.executable;
         let mut env = Self::build_env(prefix, &prefix.config, &self.backend);
 
         let home = crate::prefix::get_real_home();
@@ -794,7 +798,7 @@ impl WineRunner {
         // macOS will clean up when the process exits
         std::mem::forget(child);
 
-        Ok(pid)
+        Ok(crate::process::ProcessLaunchResult::new(pid)?.pid)
     }
 
     pub fn init_prefix(&self, prefix: &Prefix) -> Result<Output> {

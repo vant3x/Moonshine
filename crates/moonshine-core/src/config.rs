@@ -50,6 +50,18 @@ pub enum SyncMode {
     MSync,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub enum WindowsArchitecture {
+    Win64,
+    Win32,
+}
+
+impl Default for WindowsArchitecture {
+    fn default() -> Self {
+        Self::Win64
+    }
+}
+
 impl Default for SyncMode {
     fn default() -> Self {
         Self::Default
@@ -128,6 +140,8 @@ pub struct BottleConfig {
     pub windows_version: WindowsVersion,
     pub graphics_backend: GraphicsBackend,
     pub sync_mode: SyncMode,
+    #[serde(default)]
+    pub architecture: WindowsArchitecture,
     pub enable_metal_fx: bool,
     pub enable_dxvk_hud: bool,
     pub dll_overrides: Vec<(String, String)>,
@@ -157,6 +171,7 @@ impl Default for BottleConfig {
             windows_version: WindowsVersion::default(),
             graphics_backend: GraphicsBackend::default(),
             sync_mode: SyncMode::default(),
+            architecture: WindowsArchitecture::default(),
             enable_metal_fx: true,
             enable_dxvk_hud: false,
             dll_overrides: Vec::new(),
@@ -177,8 +192,10 @@ impl BottleConfig {
 
     pub fn save(&self, prefix_dir: &PathBuf) -> crate::error::Result<()> {
         let path = Self::config_path(prefix_dir);
+        let temp_path = path.with_extension("json.tmp");
         let json = serde_json::to_string_pretty(self)?;
-        std::fs::write(&path, json)?;
+        std::fs::write(&temp_path, json)?;
+        std::fs::rename(&temp_path, &path)?;
         Ok(())
     }
 
@@ -187,6 +204,22 @@ impl BottleConfig {
         let json = std::fs::read_to_string(&path)?;
         let config: Self = serde_json::from_str(&json)?;
         Ok(config)
+    }
+
+    pub fn set_env_var(&mut self, key: &str, value: &str) -> crate::error::Result<()> {
+        if key.is_empty() || key.contains('=') || key.contains('\0') || value.contains('\0') {
+            return Err(crate::error::MoonshineError::Config("invalid environment variable".to_string()));
+        }
+        if let Some(existing) = self.env_vars.iter_mut().find(|(name, _)| name == key) {
+            existing.1 = value.to_string();
+        } else {
+            self.env_vars.push((key.to_string(), value.to_string()));
+        }
+        Ok(())
+    }
+
+    pub fn remove_env_var(&mut self, key: &str) {
+        self.env_vars.retain(|(name, _)| name != key);
     }
 }
 
@@ -310,6 +343,17 @@ mod tests {
         assert_eq!(config.name, deserialized.name);
         assert_eq!(config.windows_version, deserialized.windows_version);
         assert_eq!(config.graphics_backend, deserialized.graphics_backend);
+    }
+
+    #[test]
+    fn test_environment_variable_updates_are_validated_and_persisted() {
+        let mut config = BottleConfig::default();
+        config.set_env_var("GAME_MODE", "1").unwrap();
+        config.set_env_var("GAME_MODE", "2").unwrap();
+        assert_eq!(config.env_vars, vec![("GAME_MODE".to_string(), "2".to_string())]);
+        assert!(config.set_env_var("INVALID=KEY", "value").is_err());
+        config.remove_env_var("GAME_MODE");
+        assert!(config.env_vars.is_empty());
     }
 
     #[test]

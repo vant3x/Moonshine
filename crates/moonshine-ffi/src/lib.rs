@@ -1,4 +1,4 @@
-use moonshine_core::{GraphicsBackend, Prefix, SyncMode, WindowsVersion, WineBackendConfig};
+use moonshine_core::{BottleConfig, GraphicsBackend, Prefix, SyncMode, WindowsArchitecture, WindowsVersion, WineBackendConfig};
 use std::sync::atomic::{AtomicBool, Ordering};
 
 static LAST_INSTALL_FAILED: AtomicBool = AtomicBool::new(false);
@@ -39,6 +39,11 @@ mod ffi {
         MSync,
     }
 
+    enum SwiftWindowsArchitecture {
+        Win64,
+        Win32,
+    }
+
     enum SwiftWineBackend {
         Auto,
         WineHQ,
@@ -60,6 +65,8 @@ mod ffi {
         fn set_graphics_backend(&mut self, backend: SwiftGraphicsBackend);
         fn get_sync_mode(&self) -> SwiftSyncMode;
         fn set_sync_mode(&mut self, mode: SwiftSyncMode);
+        fn get_architecture(&self) -> SwiftWindowsArchitecture;
+        fn set_architecture(&mut self, architecture: SwiftWindowsArchitecture) -> bool;
         fn get_metal_fx(&self) -> bool;
         fn set_metal_fx(&mut self, enabled: bool);
         fn get_dxvk_hud(&self) -> bool;
@@ -72,8 +79,13 @@ mod ffi {
         fn set_hid_controllers(&mut self, enabled: bool);
         fn get_reduce_wine_debug(&self) -> bool;
         fn set_reduce_wine_debug(&mut self, enabled: bool);
+        fn set_env_var(&mut self, key: &str, value: &str) -> bool;
+        fn remove_env_var(&mut self, key: &str) -> bool;
+        fn game_profile_json(&self, program_path: &str) -> String;
         fn save(&self) -> bool;
         fn delete_prefix(&self) -> bool;
+        fn backup_prefix(&self, destination: &str) -> bool;
+        fn restore_prefix(&self, backup_path: &str) -> bool;
         fn reinit_prefix(&self) -> String;
         fn list_executables(&self) -> Vec<String>;
         fn run_program(&self, program_path: &str) -> bool;
@@ -100,11 +112,14 @@ mod ffi {
         fn wine_version() -> Option<String>;
         fn get_base_dir() -> String;
         fn list_all_prefixes() -> Vec<RustPrefix>;
+        fn prefix_issues_json() -> String;
         fn download_file(url: &str, dest: &str) -> bool;
         fn get_wine_dir() -> String;
         fn get_gptk_dir() -> String;
         fn install_wine(url: &str) -> bool;
+        fn install_wine_verified(url: &str, expected_sha256: &str) -> bool;
         fn is_wine_installed() -> bool;
+        fn runtime_state_json() -> String;
         fn last_install_error() -> bool;
         fn get_available_verbs() -> Vec<String>;
         fn detect_all_wine_backends() -> Vec<WineBackendInfo>;
@@ -121,7 +136,7 @@ pub struct RustPrefix {
 impl RustPrefix {
     pub fn new_prefix(name: &str) -> Option<Self> {
         let base_dir = moonshine_core::get_base_dir().ok()?;
-        let prefix = Prefix::new(name, &base_dir).ok()?;
+        let prefix = Prefix::new_with_runtime(name, &base_dir, BottleConfig::default()).ok()?;
         Some(Self { inner: prefix })
     }
 
@@ -179,6 +194,21 @@ impl RustPrefix {
             ffi::SwiftSyncMode::ESync => SyncMode::ESync,
             ffi::SwiftSyncMode::MSync => SyncMode::MSync,
         };
+    }
+
+    pub fn get_architecture(&self) -> ffi::SwiftWindowsArchitecture {
+        match self.inner.config.architecture {
+            WindowsArchitecture::Win64 => ffi::SwiftWindowsArchitecture::Win64,
+            WindowsArchitecture::Win32 => ffi::SwiftWindowsArchitecture::Win32,
+        }
+    }
+
+    pub fn set_architecture(&mut self, architecture: ffi::SwiftWindowsArchitecture) -> bool {
+        let target = match architecture {
+            ffi::SwiftWindowsArchitecture::Win64 => WindowsArchitecture::Win64,
+            ffi::SwiftWindowsArchitecture::Win32 => WindowsArchitecture::Win32,
+        };
+        self.inner.set_architecture(target).is_ok()
     }
 
     pub fn get_metal_fx(&self) -> bool {
@@ -245,12 +275,36 @@ impl RustPrefix {
         self.inner.config.reduce_wine_debug = enabled;
     }
 
+    pub fn set_env_var(&mut self, key: &str, value: &str) -> bool {
+        self.inner.config.set_env_var(key, value).is_ok()
+    }
+
+    pub fn remove_env_var(&mut self, key: &str) -> bool {
+        self.inner.config.remove_env_var(key);
+        true
+    }
+
+    pub fn game_profile_json(&self, program_path: &str) -> String {
+        match self.inner.game_profile(std::path::PathBuf::from(program_path)) {
+            Ok(profile) => serde_json::to_string(&profile).unwrap_or_else(|_| "{}".to_string()),
+            Err(error) => format!("{{\"error\":{}}}", serde_json::to_string(&error.to_string()).unwrap_or_else(|_| "\"invalid path\"".to_string())),
+        }
+    }
+
     pub fn save(&self) -> bool {
         self.inner.save_config().is_ok()
     }
 
     pub fn delete_prefix(&self) -> bool {
         self.inner.delete().is_ok()
+    }
+
+    pub fn backup_prefix(&self, destination: &str) -> bool {
+        self.inner.backup_to(std::path::Path::new(destination)).is_ok()
+    }
+
+    pub fn restore_prefix(&self, backup_path: &str) -> bool {
+        self.inner.restore_from(std::path::Path::new(backup_path)).is_ok()
     }
 
     pub fn reinit_prefix(&self) -> String {
@@ -348,7 +402,7 @@ impl RustPrefix {
                             tracing::error!(stderr = %stderr, "wineboot stderr");
                         }
                         tracing::debug!(status = %output.status, "wineboot completed");
-                        true
+                        output.status.success()
                     }
                     Err(e) => {
                         tracing::error!(error = %e, "wineboot failed");
@@ -456,6 +510,12 @@ pub fn list_all_prefixes() -> Vec<RustPrefix> {
     RustPrefix::list_all_prefixes()
 }
 
+pub fn prefix_issues_json() -> String {
+    let base_dir = moonshine_core::get_base_dir().unwrap_or_default();
+    serde_json::to_string(&Prefix::list_issues(&base_dir).unwrap_or_default())
+        .unwrap_or_else(|_| "[]".to_string())
+}
+
 pub fn detect_wine() -> Option<String> {
     moonshine_core::WineRunner::detect()
         .ok()
@@ -492,7 +552,12 @@ pub fn get_gptk_dir() -> String {
 }
 
 pub fn install_wine(url: &str) -> bool {
-    match moonshine_core::runtime::Runtime::download_wine(url) {
+    install_wine_verified(url, "")
+}
+
+pub fn install_wine_verified(url: &str, expected_sha256: &str) -> bool {
+    let checksum = (!expected_sha256.is_empty()).then_some(expected_sha256);
+    match moonshine_core::runtime::Runtime::download_wine_with_checksum(url, checksum) {
         Ok(path) => {
             tracing::info!(path = %path.display(), "Wine installed successfully");
             LAST_INSTALL_FAILED.store(false, Ordering::Relaxed);
@@ -504,6 +569,11 @@ pub fn install_wine(url: &str) -> bool {
             false
         }
     }
+}
+
+pub fn runtime_state_json() -> String {
+    serde_json::to_string(&moonshine_core::runtime::RuntimeManager::state())
+        .unwrap_or_else(|_| "{\"runtimes\":[]}".to_string())
 }
 
 pub fn last_install_error() -> bool {

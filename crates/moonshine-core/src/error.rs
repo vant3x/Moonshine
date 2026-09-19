@@ -8,6 +8,12 @@ pub enum MoonshineError {
     #[error("Prefix already exists: {0}")]
     PrefixAlreadyExists(String),
 
+    #[error("Prefix is corrupted: {0}")]
+    PrefixCorrupt(String),
+
+    #[error("Invalid prefix name: {0}")]
+    InvalidPrefixName(String),
+
     #[error("Wine not found at: {0}")]
     WineNotFound(PathBuf),
 
@@ -34,6 +40,15 @@ pub enum MoonshineError {
 
     #[error("Config error: {0}")]
     Config(String),
+
+    #[error("Unsupported runtime architecture: {0}")]
+    UnsupportedArchitecture(String),
+
+    #[error("Runtime checksum mismatch: expected {expected}, got {actual}")]
+    ChecksumMismatch { expected: String, actual: String },
+
+    #[error("Unsafe archive entry: {0}")]
+    UnsafeArchiveEntry(String),
 }
 
 pub type Result<T> = std::result::Result<T, MoonshineError>;
