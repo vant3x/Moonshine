@@ -42,21 +42,30 @@ struct NewPrefixView: View {
                     let prefixName = name
                     let winVer = windowsVersion
                     let gfxBackend = graphicsBackend
-                    dismiss()
-                    DispatchQueue.main.async {
-                        viewModel.createPrefix(
-                            name: prefixName,                 
-                            windowsVersion: winVer,
-                            graphicsBackend: gfxBackend
-                        )
+                    let created = viewModel.createPrefix(
+                        name: prefixName,
+                        windowsVersion: winVer,
+                        graphicsBackend: gfxBackend
+                    )
+                    if created {
+                        dismiss()
+                    } else {
+                        isCreating = false
                     }
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(name.isEmpty || isCreating)
                 .keyboardShortcut(.defaultAction)
             }
+
+            if !viewModel.prefixCreationError.isEmpty {
+                Text(viewModel.prefixCreationError)
+                    .font(.caption)
+                    .foregroundColor(.red)
+                    .textSelection(.enabled)
+            }
         }
         .padding()
         .frame(width: 400, height: 300)
-    }
+    } 
 }

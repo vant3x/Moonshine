@@ -22,3 +22,6 @@ Libraries/d3dmetal/
 Moonshine/Bridge/libmoonshine_ffi.a
 Moonshine/Bridge/*.dylib
 
+AUDIT.md
+AVANCE.md
+GRAPHICS_BACKENDS.md

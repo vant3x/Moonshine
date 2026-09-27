@@ -1,7 +1,13 @@
 use moonshine_core::{BottleConfig, GraphicsBackend, Prefix, SyncMode, WindowsArchitecture, WindowsVersion, WineBackendConfig};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 static LAST_INSTALL_FAILED: AtomicBool = AtomicBool::new(false);
+static LAST_PREFIX_ERROR: OnceLock<Mutex<String>> = OnceLock::new();
+
+fn set_last_prefix_error(message: String) {
+    *LAST_PREFIX_ERROR.get_or_init(|| Mutex::new(String::new())).lock().unwrap() = message;
+}
 
 /// Initialize tracing once. Safe to call multiple times.
 /// Sends Rust logs to stderr so Swift can capture them during downloads.
@@ -72,12 +78,15 @@ mod ffi {
         fn get_dxvk_hud(&self) -> bool;
         fn set_dxvk_hud(&mut self, enabled: bool);
         fn get_wine_path(&self) -> Option<String>;
+        fn get_effective_wine_backend(&self) -> String;
+        fn get_effective_wine_path(&self) -> String;
         fn set_wine_path(&mut self, path: &str);
         fn get_wine_backend(&self) -> SwiftWineBackend;
         fn set_wine_backend(&mut self, backend: SwiftWineBackend);
         fn get_hid_controllers(&self) -> bool;
         fn set_hid_controllers(&mut self, enabled: bool);
         fn get_reduce_wine_debug(&self) -> bool;
+        fn graphics_diagnostics_json(&self) -> String;
         fn set_reduce_wine_debug(&mut self, enabled: bool);
         fn set_env_var(&mut self, key: &str, value: &str) -> bool;
         fn remove_env_var(&mut self, key: &str) -> bool;
@@ -92,10 +101,12 @@ mod ffi {
         fn launch_program(&self, program_path: &str) -> u32;
         fn init_prefix(&self) -> bool;
         fn install_steam(&self) -> String;
+        fn install_steam_from_path(&self, setup_path: &str) -> String;
         fn launch_steam(&self) -> u32;
         fn run_winetricks(&self, verb: &str) -> String;
         fn run_winetricks_preset(&self, preset: &str) -> String;
         fn find_steam_exe(&self) -> Option<String>;
+        fn discover_steam_games_json(&self) -> String;
     }
 
     extern "Rust" {
@@ -112,6 +123,7 @@ mod ffi {
         fn wine_version() -> Option<String>;
         fn get_base_dir() -> String;
         fn list_all_prefixes() -> Vec<RustPrefix>;
+        fn last_prefix_error() -> String;
         fn prefix_issues_json() -> String;
         fn download_file(url: &str, dest: &str) -> bool;
         fn get_wine_dir() -> String;
@@ -126,6 +138,7 @@ mod ffi {
         fn get_best_wine_backend() -> Option<WineBackendInfo>;
         fn has_wine_msvcrt_bug() -> bool;
         fn kill_process(pid: u32) -> bool;
+        fn process_state_json(pid: u32) -> String;
     }
 }
 
@@ -135,9 +148,23 @@ pub struct RustPrefix {
 
 impl RustPrefix {
     pub fn new_prefix(name: &str) -> Option<Self> {
-        let base_dir = moonshine_core::get_base_dir().ok()?;
-        let prefix = Prefix::new_with_runtime(name, &base_dir, BottleConfig::default()).ok()?;
-        Some(Self { inner: prefix })
+        let base_dir = match moonshine_core::get_base_dir() {
+            Ok(path) => path,
+            Err(error) => {
+                set_last_prefix_error(error.to_string());
+                return None;
+            }
+        };
+        match Prefix::new_with_runtime(name, &base_dir, BottleConfig::default()) {
+            Ok(prefix) => {
+                set_last_prefix_error(String::new());
+                Some(Self { inner: prefix })
+            }
+            Err(error) => {
+                set_last_prefix_error(error.to_string());
+                None
+            }
+        }
     }
 
     pub fn get_id(&self) -> String {
@@ -231,6 +258,18 @@ impl RustPrefix {
         self.inner.config.wine_path.clone()
     }
 
+    pub fn get_effective_wine_backend(&self) -> String {
+        moonshine_core::WineRunner::detect_for_config(&self.inner.config)
+            .map(|runner| runner.backend().display_name().to_string())
+            .unwrap_or_else(|error| format!("Unavailable: {}", error))
+    }
+
+    pub fn get_effective_wine_path(&self) -> String {
+        moonshine_core::WineRunner::detect_for_config(&self.inner.config)
+            .map(|runner| runner.wine_bin_path().to_string_lossy().to_string())
+            .unwrap_or_default()
+    }
+
     pub fn set_wine_path(&mut self, path: &str) {
         self.inner.config.wine_path = if path.is_empty() {
             None
@@ -269,6 +308,17 @@ impl RustPrefix {
 
     pub fn get_reduce_wine_debug(&self) -> bool {
         self.inner.config.reduce_wine_debug
+    }
+
+    pub fn graphics_diagnostics_json(&self) -> String {
+        match moonshine_core::WineRunner::detect_for_config(&self.inner.config) {
+            Ok(runner) => serde_json::to_string(&moonshine_core::graphics::diagnose(
+                &self.inner.config,
+                runner.backend(),
+                runner.wine_bin_path(),
+            )).unwrap_or_else(|_| "{}".to_string()),
+            Err(error) => serde_json::json!({ "usable": false, "message": error.to_string() }).to_string(),
+        }
     }
 
     pub fn set_reduce_wine_debug(&mut self, enabled: bool) {
@@ -431,6 +481,13 @@ impl RustPrefix {
         }
     }
 
+    pub fn install_steam_from_path(&self, setup_path: &str) -> String {
+        match moonshine_core::installer::install_steam_from_path(&self.inner, std::path::Path::new(setup_path)) {
+            Ok(path) => path,
+            Err(error) => format!("Steam install failed: {}", error),
+        }
+    }
+
     pub fn run_winetricks(&self, verb: &str) -> String {
         match moonshine_core::installer::run_winetricks(&self.inner, verb) {
             Ok(output) => output,
@@ -456,6 +513,13 @@ impl RustPrefix {
     pub fn find_steam_exe(&self) -> Option<String> {
         self.inner.find_steam_exe()
             .map(|p| p.to_string_lossy().to_string())
+    }
+
+    pub fn discover_steam_games_json(&self) -> String {
+        match moonshine_core::installer::discover_steam_games(&self.inner) {
+            Ok(games) => serde_json::to_string(&games).unwrap_or_else(|_| "[]".to_string()),
+            Err(error) => serde_json::json!({ "error": error.to_string() }).to_string(),
+        }
     }
 
     /// Launch Steam as a detached background process. Returns PID (0 = failed).
@@ -508,6 +572,14 @@ impl WineBackendInfo {
 
 pub fn list_all_prefixes() -> Vec<RustPrefix> {
     RustPrefix::list_all_prefixes()
+}
+
+pub fn last_prefix_error() -> String {
+    LAST_PREFIX_ERROR
+        .get_or_init(|| Mutex::new(String::new()))
+        .lock()
+        .map(|message| message.clone())
+        .unwrap_or_else(|_| "Unable to read prefix creation error".to_string())
 }
 
 pub fn prefix_issues_json() -> String {
@@ -626,6 +698,10 @@ pub fn kill_process(pid: u32) -> bool {
         tracing::error!(pid = pid, error = %std::io::Error::last_os_error(), "kill failed");
         false
     }
+}
+
+pub fn process_state_json(pid: u32) -> String {
+    moonshine_core::process::state_json(pid)
 }
 
 #[cfg(test)]

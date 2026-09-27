@@ -94,18 +94,33 @@ impl RuntimeManager {
             Self::validate_runtime_path(&path)?;
             return Ok(path);
         }
+        if config.wine_backend == crate::config::WineBackendConfig::Auto {
+            for info in WineRunner::detect_all() {
+                if Self::validate_runtime_path(&info.path).is_ok() {
+                    return Ok(info.path);
+                }
+            }
+            return Err(MoonshineError::WineNotFound(
+                crate::prefix::get_real_home().join("Library/Application Support/Moonshine/Libraries/Wine/bin/wine64"),
+            ));
+        }
         let runner = WineRunner::detect_for_config(config)?;
         Self::validate_runtime_path(runner.wine_bin_path())?;
         Ok(runner.wine_bin_path().clone())
     }
 
     pub fn validate_runtime_path(wine_path: &Path) -> Result<()> {
-        let runtime_dir = wine_path
+        if !wine_path.is_file() {
+            return Err(MoonshineError::WineNotFound(wine_path.to_path_buf()));
+        }
+        let wineserver = wine_path
             .parent()
-            .and_then(Path::parent)
+            .map(|directory| directory.join("wineserver"))
             .ok_or_else(|| MoonshineError::WineNotFound(wine_path.to_path_buf()))?;
-        let (wine, _) = Self::validate_required_binaries(runtime_dir)?;
-        let architecture = detect_binary_architecture(&wine)?;
+        if !wineserver.is_file() {
+            return Err(MoonshineError::WineNotFound(wineserver));
+        }
+        let architecture = detect_binary_architecture(wine_path)?;
         ensure_supported_architecture(&architecture)
     }
 
@@ -338,7 +353,7 @@ fn ensure_supported_architecture(architecture: &str) -> Result<()> {
 }
 
 fn ensure_architecture_for_host(architecture: &str, host: &str) -> Result<()> {
-    if host == "aarch64" && architecture != "arm64" {
+    if host == "aarch64" && architecture != "arm64" && architecture != "x86_64" {
         return Err(MoonshineError::UnsupportedArchitecture(architecture.to_string()));
     }
     Ok(())
@@ -410,7 +425,7 @@ mod tests {
     #[test]
     fn arm_runtime_is_rejected_on_x86_host() {
         assert!(ensure_architecture_for_host("arm64", "x86_64").is_ok());
-        assert!(ensure_architecture_for_host("x86_64", "aarch64").is_err());
+        assert!(ensure_architecture_for_host("i386", "aarch64").is_err());
     }
 
     #[test]

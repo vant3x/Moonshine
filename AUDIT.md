@@ -1,109 +1,123 @@
 # Moonshine Repository Audit
 
-Date: 2026-09-18
-Scope: TASK 001 baseline and TASK 002 design input.
+Date: 2026-09-19
+Scope: TASK 001, including the current local state after the recent Rust, FFI and SwiftUI changes. No product code was changed during this audit.
 
-## Architecture Overview
+## Executive Summary
 
-- SwiftUI entry point: `Moonshine/MoonshineApp.swift`.
-- UI state and orchestration: `Moonshine/ViewModels/AppViewModel.swift` (`@MainActor`).
-- Swift/Rust bridge: `crates/moonshine-ffi/src/lib.rs`, generated outputs under `Moonshine/Bridge/Generated/`.
-- Domain crate: `crates/moonshine-core/`, with modules for configuration, prefixes, runtime/downloads, installers, PE parsing, and Wine execution.
-- Native build: `scripts/build-rust.sh` builds `moonshine-ffi` for arm64; Xcode links the checked-in `Moonshine/Bridge/libmoonshine_ffi.a` through `LIBRARY_SEARCH_PATHS` and `-lmoonshine_ffi`.
+Moonshine is a macOS SwiftUI application backed by two Rust crates. The current implementation is a functional prefix manager with Wine backend discovery, runtime download/validation, Steam installation/discovery, graphics diagnostics and supervised process logging. It is not yet a complete game launcher UX as described by TASK 008.
+
+The repository does not demonstrate a real Windows game launch or rendering result. No Windows executable, Steam installation, game fixture, graphics benchmark, Swift test target or CI workflow is present in this checkout.
+
+## Architecture
+
+### SwiftUI entry point
+
+- `Moonshine/MoonshineApp.swift:3-27` defines `MoonshineApp`, creates the `@StateObject` `AppViewModel`, installs `ContentView`, the New Prefix command and macOS Settings.
+- `Moonshine/Views/ContentView.swift:4-39` provides the current NavigationSplitView shell: a prefix list on the left and a prefix detail or welcome screen on the right.
+- `Moonshine/ViewModels/AppViewModel.swift:39-760` is the main-actor orchestration object. It owns prefix snapshots, runtime detection, installation status, initialization status and process polling.
+
+### Rust crates and modules
+
+Workspace members are declared in `Cargo.toml:1-3`:
+
+- `crates/moonshine-core`: library crate; no binary target. Modules exported in `crates/moonshine-core/src/lib.rs:1-11`:
+  - `config.rs`: persisted bottle configuration and validation.
+  - `downloader.rs`: downloads, checksums and safe archive extraction.
+  - `error.rs`: domain error enum.
+  - `game.rs`: game profile association.
+  - `graphics.rs`: D3DMetal/DXVK diagnostics and validation.
+  - `installer.rs`: Steam, winetricks and local Steam manifest discovery.
+  - `pe_parser.rs`: Windows executable parsing.
+  - `process.rs`: detached process supervision and launch logs.
+  - `prefix.rs`: prefix lifecycle, persistence, backups and executable scanning.
+  - `runtime.rs`: runtime discovery, validation, download and replacement.
+  - `wine.rs`: backend detection, environment construction and Wine execution.
+- `crates/moonshine-ffi`: static library crate, configured in `crates/moonshine-ffi/Cargo.toml:8-10`; it exposes Rust types and functions to Swift.
+- No Rust binary targets were found. `Package.swift` is absent; Swift is built by Xcode rather than Swift Package Manager.
+
+### Swift/Rust FFI
+
+- The bridge declaration is `crates/moonshine-ffi/src/lib.rs:30-136`.
+- `RustPrefix` implements the prefix-facing API at `crates/moonshine-ffi/src/lib.rs:139-520`.
+- Global functions for detection, runtime state, process state and termination are at `crates/moonshine-ffi/src/lib.rs:532-700`.
+- `crates/moonshine-ffi/build.rs:1-19` generates bridge files into `Moonshine/Bridge/Generated/` during Cargo builds.
+- The checked-in Swift header and wrapper are `Moonshine/Bridge/Generated/libmoonshine_ffi/libmoonshine_ffi.h` and `.swift`; they are generated artifacts and can drift if the bridge is changed without rebuilding.
+- The contract is currently lossy for many operations: `Bool`, `0`, empty vectors and formatted `String` values are used instead of structured operation results. This is confirmed by the signatures at `crates/moonshine-ffi/src/lib.rs:89-107` and implementations such as `delete_prefix`, `launch_program` and `install_steam`.
 
 ## Feature Matrix
 
-| Area | Current implementation | Status |
-|---|---|---|
-| SwiftUI shell | SwiftUI app, views, main-actor view model | Implemented |
-| Prefix creation/listing/config | Rust `Prefix`, `BottleConfig`, JSON persistence | Implemented, weak error propagation |
-| Wine backend discovery | WineHQ, GPTK, CrossOver, Whisky and bundled paths | Implemented, environment-dependent |
-| Wine/GPTK execution | Environment construction, wineboot, foreground and detached launch | Implemented, lifecycle limited |
-| Steam installer/launcher | Downloads SteamSetup.exe, installs and launches | Implemented, not independently integration-tested |
-| D3DMetal/DXVK | Environment variables and DLL overrides | Partial; payloads are not present in this checkout |
-| Process lifecycle | PID returned to Swift and SIGTERM helper | Partial and unsafe |
-| Persistence | `bottle.json` load/save | Implemented, non-atomic before TASK 002 change |
-| Tests | Rust unit tests | 67 passing baseline; no Swift/UI or Wine integration tests |
-| CI | None found | Missing |
+| Area | Current state | Assessment |
+| --- | --- | --- |
+| SwiftUI shell | Prefix list, welcome screen, detail screen, settings and New Prefix sheet | Implemented |
+| Prefix persistence | `bottle.json`, validation, atomic save, reload, backup/restore | Implemented and Rust-tested |
+| Runtime manager | Discovery and JSON state exist; verified download path exists through FFI | Core implemented; no dedicated Swift runtime screen |
+| Wine backends | GPTK, WineHQ, CrossOver, Whisky, Wine Stable and custom-path detection | Implemented; host-dependent |
+| Graphics | D3DMetal/DXVK prerequisites and diagnostics; payloads are absent from checkout | Partial; no rendering test |
+| Steam | Download/local installer, installation log, launch, local manifest discovery | Implemented; not real-environment tested |
+| Game library | Discovered Steam games are embedded as JSON in `PrefixData` | Partial; no library screen or durable game model in Swift |
+| Process lifecycle | Supervisor-owned child and launch logs; PID polling and SIGTERM exposed | Partial; ownership and process groups missing |
+| Diagnostics/logs | Per-launch log path and graphics message are surfaced in detail view | Partial; no diagnostics/logs screen or log browser |
+| Tests | 80 core tests + 9 FFI tests pass; no Swift/UI or Wine integration tests | Rust baseline only |
+| CI | No `.github/workflows` or equivalent found | Missing |
 
-## Confirmed Bugs
+## Confirmed Bugs and Risks
 
-1. `RustPrefix::init_prefix()` returns `true` when the Rust call succeeds even if `wineboot` exits non-zero (`crates/moonshine-ffi/src/lib.rs`, `init_prefix`; `crates/moonshine-core/src/wine.rs`, `init_prefix`).
-2. Detached Wine children are forgotten, and Swift tracks only a PID. The PID may refer to a wrapper process and is not ownership-checked before SIGTERM (`crates/moonshine-core/src/wine.rs`, `launch_program`; `Moonshine/ViewModels/AppViewModel.swift`, process tracking).
-3. Prefix deletion/reinitialization has no running-process coordination (`RustPrefix::delete_prefix`/`reinit_prefix`; `AppViewModel.deletePrefix`).
-4. `Runtime::download_wine` removes the existing installation before validating the replacement (`crates/moonshine-core/src/runtime.rs`).
-5. Downloaded Wine, SteamSetup and winetricks content has no checksum/signature verification (`crates/moonshine-core/src/downloader.rs`, `installer.rs`).
-6. Prefix loading accepts an arbitrary `id` string and joins it to the base directory; path validation was absent (`crates/moonshine-core/src/prefix.rs`).
-7. `BottleConfig::save` wrote directly to `bottle.json`, so interruption could leave malformed JSON (`crates/moonshine-core/src/config.rs`).
-8. Xcode links the Rust static library but has no build phase that regenerates/copies it; a clean build requires `scripts/build-rust.sh` first. The build also reports a duplicate `-lmoonshine_ffi` warning in this workspace.
+### Confirmed issues
 
-## Confirmed Concurrency/UI Issues
+1. **`wineboot -u` status is ignored.** `WineRunner::init_prefix` runs the update at `crates/moonshine-core/src/wine.rs:853-884` but returns the first `wineboot` output, so the update can fail while initialization reports success. The FFI method correctly checks the returned status, but that status is the wrong command's status (`crates/moonshine-ffi/src/lib.rs:374-397`).
+2. **Prefix mutation is not coordinated with running processes.** `RustPrefix::reinit_prefix` removes the prefix directory directly (`crates/moonshine-ffi/src/lib.rs:334-373`), and `AppViewModel.deletePrefix` ignores the boolean result (`Moonshine/ViewModels/AppViewModel.swift:363-379`). A live Wine process can still use the directory.
+3. **PID termination is not ownership-safe.** `kill_process` sends `SIGTERM` to any non-zero PID (`crates/moonshine-ffi/src/lib.rs:674-689`). There is no process-group validation, owner token, or persisted process identity.
+4. **Process records are never removed.** `crates/moonshine-core/src/process.rs:45-105` retains completed records in the global registry. Records also do not survive an app restart.
+5. **Process-wide stderr redirection is concurrent and unsafe.** `AppViewModel.installWine` changes the global `STDERR_FILENO` from a detached task (`Moonshine/ViewModels/AppViewModel.swift:115-160`), which can capture or disrupt unrelated Rust logs.
+6. **Main-actor setup performs blocking work.** `AppViewModel.setup` calls runtime detection, backend detection and prefix loading synchronously (`Moonshine/ViewModels/AppViewModel.swift:70-111`). These operations include filesystem traversal and subprocess-backed version detection.
+7. **Custom Wine path is applied to every prefix.** `setCustomWinePath` iterates through every prefix (`Moonshine/ViewModels/AppViewModel.swift:542-558`) even though Wine selection is otherwise stored in each prefix's configuration.
+8. **Xcode has no Rust build phase.** `Moonshine.xcodeproj/project.pbxproj:42-63` has only Sources, Frameworks and Resources phases. The static library is linked through `LIBRARY_SEARCH_PATHS` and `-lmoonshine_ffi` (`project.pbxproj:205-252`) while `Moonshine/Bridge/libmoonshine_ffi.a` is ignored by `.gitignore:22`. A clean checkout is therefore not a reproducible one-command Xcode build.
+9. **Strict lint baseline is failing.** `cargo clippy --workspace --all-targets --all-features -- -D warnings` reports multiple errors, including derivable defaults, needless borrows, `map_or` simplifications, redundant closures and items after a test module. This is a confirmed quality-gate failure, not a runtime failure.
 
-- `AppViewModel` performs filesystem traversal, backend detection and subprocess-backed detection from main-actor methods during setup.
-- Several long operations use `Task.detached`; global flags are not per-prefix and deletion/launch do not share a common operation coordinator.
-- Wine installation redirects the process-wide stderr descriptor from a detached task.
-- Swift bridge vectors and generated reference APIs are tightly coupled to generated `swift-bridge` internals.
-- Save failures are discarded in Swift and most Rust FFI failures become `false`, `0`, empty vectors, or formatted strings.
+### Unverified risks
 
-## Runtime and Graphics Integration
+- Wine child trees may outlive the tracked supervisor or wrapper PID; this requires a real Wine installation to verify.
+- PID reuse could make an old UI PID target an unrelated process.
+- Backend behavior, sandbox/file access and graphics compatibility vary by installed runtime and game.
+- D3DMetal and DXVK payload availability is not demonstrated: `Libraries/d3dmetal/` and `Libraries/dxvk/` contain no usable payload in this checkout.
+- Generated bridge files may become stale after Rust API changes.
 
-- Wine backend detection and environment setup are in `crates/moonshine-core/src/wine.rs`.
-- GPTK setup is best-effort and creates synthetic `syswow64` links when needed.
-- D3DMetal/DXVK integration currently configures environment/overrides; `Libraries/d3dmetal/` and `Libraries/dxvk/` contain no payload files in this checkout.
-- Quarantine removal and several symlink operations ignore their result.
+## TASK 008 UX Assessment
 
-## Missing Features
+The current UI is a prefix administration surface, not yet the requested launcher workflow.
 
-- Explicit process ownership/handles and coordinated shutdown before prefix mutation.
-- Structured FFI operation results with error codes/messages rather than sentinel values.
-- Atomic runtime replacement with post-extraction validation.
-- Download integrity verification and update metadata.
-- Swift unit/UI tests and Wine-process integration tests.
-- CI workflow and reproducible clean-checkout native build.
-- Steam integration is intentionally not expanded in TASK 002.
+1. **Game Library:** Missing as a first-class screen. Steam games are loaded into `PrefixData.steamGames` as raw JSON (`Moonshine/ViewModels/AppViewModel.swift:6-33, 186-199`).
+2. **Runtime Manager:** Runtime state is fetched into a string (`AppViewModel.swift:48, 92`) but there is no runtime management view for selection, installation progress, validation or removal.
+3. **Prefix Manager:** Partially implemented through the split list, New Prefix sheet and PrefixDetailView.
+4. **Add Game Wizard:** Missing. The current flow opens an arbitrary `.exe`/`.msi` panel and immediately launches it (`PrefixDetailView.swift:426-447`); it does not persist a game, validate a profile or guide the user.
+5. **Game Settings:** Partially present as prefix settings, not per-game settings.
+6. **Launch Progress:** Partially present as text and polling in `AppViewModel.monitorProcess` (`AppViewModel.swift:265-296`); no reusable progress model or dedicated screen.
+7. **Diagnostics / Logs:** Partially present as one graphics message and launch-log path; no searchable log view or diagnostic report.
 
-## Technical Risks (Unverified)
+The most important TASK 008 architectural gap is state ownership. Swift stores snapshots and status strings separately from Rust, while views also keep local copies such as `steamInstalled` and configuration fields (`PrefixDetailView.swift:5-21`). This makes stale UI and conflicting state likely as more screens are added.
 
-- Wine process PID reuse could terminate an unrelated process if a tracked PID exits and is reused.
-- Captured process output and global stderr redirection may interleave under concurrent operations.
-- Generated bridge files may drift from the Rust bridge declaration.
-- Backend detection behavior varies substantially across host installations and macOS sandbox permissions.
-- The current Xcode build may be relying on a checked-in prebuilt archive rather than rebuilding Rust.
+## Build and Test Baseline
 
-## Baseline
+Executed on 2026-09-19:
 
-- `cargo test --workspace`: passed, 67 tests total (58 core, 9 FFI).
-- `cargo fmt --all -- --check`: failed because existing formatting differences are present in `installer.rs`, `wine.rs`, and related code; no formatting changes were applied for the audit.
-- `xcodebuild -project Moonshine.xcodeproj -scheme Moonshine -configuration Debug -destination 'platform=macOS' build`: reached a successful native build in this workspace; emitted a duplicate `-lmoonshine_ffi` linker warning and an empty supported-platform diagnostic.
-- No `.github` CI workflow was found.
+- `cargo test --workspace`: **passed, 89 tests** (80 `moonshine-core`, 9 `moonshine-ffi`).
+- `cargo fmt --all -- --check`: **failed**; formatting differences remain in Rust sources, including `process.rs`, `wine.rs` and related modules.
+- `cargo clippy --workspace --all-targets --all-features -- -D warnings`: **failed** on existing lint violations.
+- `xcodebuild -project Moonshine.xcodeproj -scheme Moonshine -configuration Debug -destination 'platform=macOS' build`: **passed** for the current machine and arm64 target. It emitted `ignoring duplicate libraries: '-lmoonshine_ffi'` and an empty supported-platform diagnostic.
+- No Swift unit/UI tests, Wine integration tests, installed Steam client test or real Windows game launch test were available.
 
-## Prioritized Implementation Plan
+## Prioritized Plan
 
-1. Establish safe domain contracts: validate prefix identifiers and executable paths, add explicit process request/result models, propagate non-zero wineboot status, and make config writes atomic.
-2. Replace FFI sentinel results with an explicit operation-result bridge while preserving a compatibility layer for the current Swift UI.
-3. Move long-running orchestration behind an actor/service and remove process-wide stderr redirection.
-4. Add process ownership and prefix operation coordination before allowing delete/reinitialize.
-5. Make runtime replacement transactional and add checksum/signature verification for remote artifacts.
-6. Add Swift tests, Wine integration tests with fixture runners, CI, and a clean Xcode/Rust build pipeline.
-7. Only then expand Steam/game library integration.
+1. Fix the execution contract first: return the `wineboot -u` result, make prefix delete/reinitialize reject active processes, and replace unrestricted PID killing with owned process groups.
+2. Introduce one structured FFI operation result containing status, error code/message, progress and log path. Preserve compatibility wrappers only while Swift migrates.
+3. Move blocking detection and filesystem work behind an actor/service. Make per-prefix operation state explicit rather than global flags and status strings.
+4. Make Xcode invoke `scripts/build-rust.sh` or otherwise build/link Rust reproducibly; remove duplicate linker configuration.
+5. Build TASK 008 around durable Swift models: `GameLibrary`, `RuntimeState`, `PrefixState`, `LaunchOperation` and `DiagnosticReport`, each with loading/success/error states.
+6. Implement the functional screens in this order: Runtime Manager, Prefix Manager cleanup, Add Game Wizard, Game Library, Launch Progress, Diagnostics/Logs, then per-game settings.
+7. Add Swift tests for state transitions and navigation actions, UI tests for destructive confirmations and keyboard commands, and Wine integration fixtures before claiming launch support.
+8. Add CI gates for tests, formatting, clippy and a clean bridge/Xcode build.
 
-## TASK 002 Changes Applied
+## Launch Claim
 
-- Added validated prefix-id and program-path handling in the core domain.
-- Added `ProgramRequest` and `ProcessLaunchResult` models for process requests/results.
-- Made `bottle.json` writes atomic.
-- Made `wineboot` report failure through the existing FFI boolean instead of false success.
-- Added focused unit tests for these contracts.
-
-Remaining debt is listed above; Steam integration was not changed.
-
-## TASK 003 Runtime Manager
-
-- Supported runtime types are represented by `RuntimeType`: GPTK, WineHQ, CrossOver, Whisky, Wine Stable and Custom.
-- `RuntimeManager::discover()` validates detected Wine installations, required `wine64`/`wineserver` binaries, architecture and macOS compatibility.
-- Runtime installation uses a generated local archive name, optional SHA-256 verification, safe tar/zip extraction, staging, validation and rollback-preserving replacement.
-- `runtime.json` stores runtime type, version, architecture, host macOS version, final binary paths, checksum and installation time.
-- Existing per-prefix `WineBackendConfig`/`wine_path` selection remains the selection mechanism; `RuntimeManager::selected_path()` makes that contract explicit.
-- `runtime_state_json()` exposes discovered runtime state to SwiftUI, while `install_wine_verified()` allows the UI/FFI caller to provide a published checksum.
-- No third-party runtime is bundled or redistributed by these changes. The default GPTK URL remains an external download selected by the user/application.
-- Tests cover valid/missing binaries, checksum mismatch, unsupported architecture, rejected archive paths, failed download input and interrupted replacement rollback.
+The repository contains code paths intended to launch Steam and arbitrary Windows executables, but this audit does **not** claim that Moonshine can launch a Windows game successfully. That behavior remains unverified on the available machine and with the current checkout.

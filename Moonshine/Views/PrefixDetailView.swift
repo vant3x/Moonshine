@@ -18,6 +18,7 @@ struct PrefixDetailView: View {
     @State private var showDeleteConfirm = false
     @State private var showReinitConfirm = false
     @State private var steamInstalled = false
+    @State private var showSteamInstallerPicker = false
 
     private var hasSteamInstalled: Bool {
         steamInstalled
@@ -51,14 +52,14 @@ struct PrefixDetailView: View {
 
                         if wineBackend == "auto" {
                             HStack {
-                                Text("Active:")
-                                Text(viewModel.backendName)
-                                    .foregroundColor(viewModel.backendWo64 ? .green : .orange)
+                                Text("Effective:")
+                                Text(prefix.effectiveWineBackend)
+                                    .foregroundColor(prefix.effectiveWineBackend.contains("Unavailable") ? .red : .green)
                                     .fontWeight(.medium)
-                                if viewModel.backendWo64 {
-                                    Text("(WoW64)")
+                                if prefix.effectiveWinePath.isEmpty == false {
+                                    Text("(configured for this prefix)")
                                         .font(.caption)
-                                        .foregroundColor(.green)
+                                        .foregroundColor(.secondary)
                                 }
                             }
                             .font(.caption)
@@ -74,6 +75,12 @@ struct PrefixDetailView: View {
                                 .foregroundColor(.secondary)
                         } else {
                             Text("Use WineHQ for Steam/winetricks (32-bit). Use GPTK for gaming (best performance).")
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                        }
+
+                        if prefix.steamGames.contains("\"error\"") {
+                            Text("Steam game metadata is unavailable for this prefix.")
                                 .font(.caption)
                                 .foregroundColor(.secondary)
                         }
@@ -191,6 +198,10 @@ struct PrefixDetailView: View {
                                     Label("Install Steam", systemImage: "arrow.down.circle")
                                 }
                                 .disabled(viewModel.isInstalling || viewModel.isInitializing)
+                                Button(action: { showSteamInstallerPicker = true }) {
+                                    Label("Use SteamSetup.exe", systemImage: "folder")
+                                }
+                                .disabled(viewModel.isInstalling || viewModel.isInitializing)
                             } else if viewModel.isSteamRunning {
                                 Button(action: { viewModel.stopSteam() }) {
                                     Label("Stop Steam (PID \(viewModel.activeSteamPid ?? 0))", systemImage: "stop.fill")
@@ -266,6 +277,15 @@ struct PrefixDetailView: View {
                                         .font(.caption)
                                 }
                                 .buttonStyle(.plain)
+                            }
+                        }
+
+                        ForEach(prefix.executables.filter { !$0.lowercased().contains("steam.exe") }, id: \.self) { exe in
+                            let key = "\(prefix.id)_\(URL(fileURLWithPath: exe).lastPathComponent)"
+                            if let state = viewModel.processStates[key] {
+                                Text("\(URL(fileURLWithPath: exe).lastPathComponent): \(state)")
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
                             }
                         }
 
@@ -351,6 +371,10 @@ struct PrefixDetailView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
+                Text(prefix.graphicsMessage)
+                    .font(.caption)
+                    .foregroundColor(prefix.graphicsMessage.contains("unavailable") || prefix.graphicsMessage.contains("requires") ? .orange : .secondary)
+
                 // Bottom padding for scroll
                 Color.clear.frame(height: 16)
             }
@@ -395,6 +419,15 @@ struct PrefixDetailView: View {
         .onChange(of: prefix.id) { _ in
             DispatchQueue.main.async {
                 loadState()
+            }
+        }
+        .fileImporter(
+            isPresented: $showSteamInstallerPicker,
+            allowedContentTypes: [UTType(filenameExtension: "exe") ?? .data],
+            allowsMultipleSelection: false
+        ) { result in
+            if case .success(let urls) = result, let url = urls.first {
+                viewModel.installSteamInBackground(id: prefix.id, setupPath: url.path)
             }
         }
     }

@@ -1,5 +1,6 @@
 use crate::downloader;
 use crate::error::{MoonshineError, Result};
+use crate::game::GameProfile;
 use crate::prefix::Prefix;
 use crate::wine::WineRunner;
 use std::fs;
@@ -57,6 +58,20 @@ pub fn download_winetricks() -> Result<PathBuf> {
 }
 
 pub fn install_steam(prefix: &Prefix) -> Result<String> {
+    let setup_exe = download_steam_setup()?;
+    install_steam_with_setup(prefix, &setup_exe)
+}
+
+pub fn install_steam_from_path(prefix: &Prefix, setup_exe: &std::path::Path) -> Result<String> {
+    if !setup_exe.is_file()
+        || setup_exe.extension().map_or(true, |extension| !extension.eq_ignore_ascii_case("exe"))
+    {
+        return Err(MoonshineError::InvalidPath(setup_exe.to_path_buf()));
+    }
+    install_steam_with_setup(prefix, setup_exe)
+}
+
+fn install_steam_with_setup(prefix: &Prefix, setup_exe: &std::path::Path) -> Result<String> {
     let runner = WineRunner::detect_for_config(&prefix.config)?;
 
     // SteamSetup.exe is a 32-bit application — requires WoW64 support.
@@ -102,7 +117,9 @@ pub fn install_steam(prefix: &Prefix) -> Result<String> {
         ));
     }
 
-    let setup_exe = download_steam_setup()?;
+    if !effective_runner.wine_bin_path().is_file() {
+        return Err(MoonshineError::WineNotFound(effective_runner.wine_bin_path().clone()));
+    }
 
     tracing::info!(prefix = %prefix.name, "Running SteamSetup.exe");
     tracing::debug!(wine = %effective_runner.wine_bin_path().display(), "Wine binary");
@@ -116,6 +133,11 @@ pub fn install_steam(prefix: &Prefix) -> Result<String> {
     fs::copy(&setup_exe, &dest_exe)?;
 
     let mut env = WineRunner::build_env(prefix, &prefix.config, &effective_runner.backend());
+    // Steam may use a WoW64 fallback different from the prefix's configured runner.
+    env.insert(
+        "WINE".to_string(),
+        effective_runner.wine_bin_path().to_string_lossy().to_string(),
+    );
 
     // Ensure cabextract/Homebrew tools are in PATH for winetricks deps
     let home = crate::prefix::get_real_home();
@@ -150,6 +172,7 @@ pub fn install_steam(prefix: &Prefix) -> Result<String> {
 
     let stdout = String::from_utf8_lossy(&output.stdout).to_string();
     let stderr = String::from_utf8_lossy(&output.stderr).to_string();
+    write_steam_log(prefix, &format!("direct installer\nstdout:\n{}\nstderr:\n{}\n", stdout, stderr))?;
     tracing::debug!(stdout = %stdout, stderr = %stderr, "SteamSetup direct execution");
 
     // If direct execution failed, try with start /unix
@@ -168,6 +191,7 @@ pub fn install_steam(prefix: &Prefix) -> Result<String> {
 
         let stdout2 = String::from_utf8_lossy(&output2.stdout).to_string();
         let stderr2 = String::from_utf8_lossy(&output2.stderr).to_string();
+        write_steam_log(prefix, &format!("fallback installer\nstdout:\n{}\nstderr:\n{}\n", stdout2, stderr2))?;
         tracing::debug!(stdout = %stdout2, stderr = %stderr2, "SteamSetup start /unix execution");
 
         // If both methods failed, report the error
@@ -235,7 +259,126 @@ pub fn launch_steam_detached(prefix: &Prefix) -> Result<u32> {
     tracing::info!(path = %steam_exe.display(), "Launching Steam (detached)");
     tracing::debug!(hid_controllers = prefix.config.enable_hid_controllers, "Controller support");
 
-    runner.launch_program(prefix, &steam_exe)
+    let mut steam_prefix = prefix.clone();
+    steam_prefix.config.wine_path = Some(runner.wine_bin_path().to_string_lossy().to_string());
+    runner.launch_system_program_with_args(
+        &steam_prefix,
+        &steam_exe,
+        &["-cef-disable-gpu", "-no-cef-sandbox"],
+    )
+}
+
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct InstalledSteamGame {
+    pub app_id: String,
+    pub name: String,
+    pub install_dir: PathBuf,
+    pub executable_candidates: Vec<PathBuf>,
+    pub profiles: Vec<GameProfile>,
+}
+
+/// Discover games from local Steam manifests only. This does not contact Steam,
+/// authenticate, download content, or choose an executable silently.
+pub fn discover_steam_games(prefix: &Prefix) -> Result<Vec<InstalledSteamGame>> {
+    let steam_exe = prefix
+        .find_steam_exe()
+        .ok_or_else(|| MoonshineError::Config("Steam is not installed in this prefix.".to_string()))?;
+    let steam_root = steam_exe
+        .parent()
+        .ok_or_else(|| MoonshineError::InvalidPath(steam_exe.clone()))?;
+    let mut libraries = vec![steam_root.to_path_buf()];
+    let library_file = steam_root.join("steamapps/libraryfolders.vdf");
+    if library_file.is_file() {
+        let content = fs::read_to_string(&library_file)?;
+        for line in content.lines() {
+            if let Some(path) = quoted_value(line, "path") {
+                let path = PathBuf::from(path.replace("\\\\", "\\"));
+                if path.is_dir() && !libraries.contains(&path) {
+                    libraries.push(path);
+                }
+            }
+        }
+    }
+
+    let mut games = Vec::new();
+    for library in libraries {
+        let steamapps = library.join("steamapps");
+        if !steamapps.is_dir() {
+            continue;
+        }
+        for entry in fs::read_dir(&steamapps)? {
+            let entry = entry?;
+            let file_name = entry.file_name().to_string_lossy().to_string();
+            if !file_name.starts_with("appmanifest_") || !file_name.ends_with(".acf") {
+                continue;
+            }
+            let content = fs::read_to_string(entry.path())?;
+            let app_id = file_name
+                .trim_start_matches("appmanifest_")
+                .trim_end_matches(".acf")
+                .to_string();
+            let name = quoted_value(&content, "name").unwrap_or_else(|| format!("Steam App {}", app_id));
+            let install_dir_name = match quoted_value(&content, "installdir") {
+                Some(value) => value,
+                None => continue,
+            };
+            let install_dir = steamapps.join("common").join(install_dir_name);
+            if !install_dir.is_dir() {
+                continue;
+            }
+            let executable_candidates = find_game_executables(&install_dir)?;
+            let profiles = executable_candidates
+                .iter()
+                .filter_map(|path| GameProfile::new(&prefix.id, path).ok())
+                .collect();
+            games.push(InstalledSteamGame {
+                app_id,
+                name,
+                executable_candidates,
+                profiles,
+                install_dir,
+            });
+        }
+    }
+    games.sort_by(|left, right| left.name.to_lowercase().cmp(&right.name.to_lowercase()));
+    Ok(games)
+}
+
+fn write_steam_log(prefix: &Prefix, content: &str) -> Result<()> {
+    let logs = prefix.path.join("logs");
+    fs::create_dir_all(&logs)?;
+    fs::write(logs.join("steam-install.log"), content)?;
+    Ok(())
+}
+
+fn quoted_value(content: &str, key: &str) -> Option<String> {
+    for line in content.lines() {
+        let fields: Vec<&str> = line.split('"').collect();
+        if fields.len() >= 4 && fields[1].trim() == key {
+            return Some(fields[3].replace("\\\\", "\\"));
+        }
+    }
+    None
+}
+
+fn find_game_executables(root: &std::path::Path) -> Result<Vec<PathBuf>> {
+    let mut executables = Vec::new();
+    for entry in walkdir::WalkDir::new(root)
+        .max_depth(3)
+        .into_iter()
+        .filter_map(|entry| entry.ok())
+    {
+        if entry.file_type().is_file()
+            && entry
+                .path()
+                .extension()
+                .map_or(false, |extension| extension.eq_ignore_ascii_case("exe"))
+        {
+            executables.push(entry.path().to_path_buf());
+        }
+    }
+    executables.sort();
+    Ok(executables)
 }
 
 pub fn check_winetricks_deps() -> Result<()> {
@@ -454,4 +597,41 @@ pub fn list_available_verbs() -> Vec<(&'static str, &'static str)> {
         ("xinput", "XInput (gamepad support)"),
         ("corefonts", "Microsoft Core Fonts"),
     ]
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn discovers_games_from_local_steam_manifest() {
+        let root = std::env::temp_dir().join(format!("moonshine-steam-{}", uuid::Uuid::new_v4()));
+        let prefix = Prefix::new("Steam Test", &root).unwrap();
+        let steam_root = prefix.drive_c().join("Program Files (x86)/Steam");
+        let game_dir = steam_root.join("steamapps/common/Test Game");
+        fs::create_dir_all(&game_dir).unwrap();
+        fs::write(steam_root.join("steam.exe"), b"steam").unwrap();
+        fs::write(
+            steam_root.join("steamapps/appmanifest_123.acf"),
+            "\"AppState\"\n{\n\t\"name\"\t\"Test Game\"\n\t\"installdir\"\t\"Test Game\"\n}",
+        )
+        .unwrap();
+        fs::write(game_dir.join("TestGame.exe"), b"game").unwrap();
+
+        let games = discover_steam_games(&prefix).unwrap();
+        assert_eq!(games.len(), 1);
+        assert_eq!(games[0].app_id, "123");
+        assert_eq!(games[0].name, "Test Game");
+        assert_eq!(games[0].executable_candidates.len(), 1);
+        assert_eq!(games[0].profiles.len(), 1);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn discovery_requires_an_installed_client() {
+        let root = std::env::temp_dir().join(format!("moonshine-steam-{}", uuid::Uuid::new_v4()));
+        let prefix = Prefix::new("No Steam", &root).unwrap();
+        assert!(discover_steam_games(&prefix).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
 }

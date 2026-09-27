@@ -6,6 +6,12 @@ use std::os::unix::process::ExitStatusExt;
 use std::path::PathBuf;
 use std::process::{Command, Output};
 
+fn is_wine_11_0(version: &str) -> bool {
+    let version = version.strip_prefix("wine-").unwrap_or(version);
+    let mut components = version.split('.');
+    matches!((components.next(), components.next()), (Some("11"), Some("0")))
+}
+
 /// Wine backend type - determines WoW64 support and priority
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub enum WineBackend {
@@ -104,6 +110,14 @@ impl WineRunner {
             let pb = PathBuf::from(path);
             if pb.exists() {
                 let backend = Self::detect_backend_for_path(&pb);
+                if let Some(version) = Self::get_version(&pb) {
+                    if is_wine_11_0(&version) {
+                        return Err(MoonshineError::Config(format!(
+                            "Selected Wine runtime {} has the Wine 11.0 msvcrt bug. Select Wine Devel 11.10 or another runtime.",
+                            version
+                        )));
+                    }
+                }
                 return Ok(Self::with_backend(pb, backend));
             }
         }
@@ -135,7 +149,7 @@ impl WineRunner {
     fn find_backend(target: WineBackend) -> Result<Self> {
         let backends = Self::detect_all();
         for info in backends {
-            if info.backend == target {
+            if info.backend == target && !info.version.as_deref().map(is_wine_11_0).unwrap_or(false) {
                 return Ok(Self::with_backend(info.path, info.backend));
             }
         }
@@ -150,7 +164,7 @@ impl WineRunner {
     pub fn find_backend_with_wo64() -> Result<Self> {
         let backends = Self::detect_all();
         for info in backends {
-            if info.has_wo64 {
+            if info.has_wo64 && !info.version.as_deref().map(is_wine_11_0).unwrap_or(false) {
                 tracing::debug!(backend = %info.backend, path = %info.path.display(), "Found WoW64-capable backend");
                 return Ok(Self::with_backend(info.path, info.backend));
             }
@@ -169,7 +183,7 @@ impl WineRunner {
         // Warn about Wine 11.0 msvcrt bug
         for info in &backends {
             if let Some(ref version) = info.version {
-                if version.contains("wine-11.0") {
+                if is_wine_11_0(version) {
                     tracing::warn!(version = %version, "Wine has known msvcrt.dll crash bug on macOS ARM64");
                     tracing::info!("All wine commands will fail with: Unhandled exception 0xc0000417");
                     tracing::info!("Fix: brew install --cask wine@devel");
@@ -181,7 +195,7 @@ impl WineRunner {
         // Prefer backends WITHOUT the msvcrt bug
         let healthy = backends.iter().find(|info| {
             if let Some(ref version) = info.version {
-                if version.starts_with("wine-11.0") && !version.starts_with("wine-11.0.0") {
+                if is_wine_11_0(version) {
                     tracing::debug!(backend = %info.backend, version = %version, "Skipping backend - has msvcrt bug");
                     return false;
                 }
@@ -577,8 +591,7 @@ impl WineRunner {
         if let Ok(version) = self.wine_version() {
             // Wine 11.0.x has the msvcrt crash on macOS ARM64
             // Match exactly "wine-11.0" or "wine-11.0." but NOT "wine-11.1", "wine-11.10", etc.
-            if (version.starts_with("wine-11.0") && !version.starts_with("wine-11.0.0"))
-                || version == "wine-11.0" {
+            if is_wine_11_0(&version) {
                 tracing::warn!(version = %version, "Detected Wine has known msvcrt bug (Wine 11.0)");
                 return true;
             }
@@ -704,6 +717,7 @@ impl WineRunner {
     /// Run a Windows program through Wine and **wait** for it to exit.
     /// Use this for installers where you need to know when they finish.
     pub fn run_program(&self, prefix: &Prefix, program_path: &PathBuf) -> Result<Output> {
+        self.validate_launch_environment(prefix, true)?;
         let request = prefix.program_request(program_path.clone())?;
         let program_path = &request.executable;
         let mut env = Self::build_env(prefix, &prefix.config, &self.backend);
@@ -759,6 +773,32 @@ impl WineRunner {
     /// Use this for Steam, games, and any long-running Windows apps.
     /// Returns the child process PID so the caller can track or kill it.
     pub fn launch_program(&self, prefix: &Prefix, program_path: &PathBuf) -> Result<u32> {
+        self.launch_program_internal(prefix, program_path, true, &[])
+    }
+
+    /// Launch a system component such as Steam without requiring the selected
+    /// game graphics backend to be available. Steam itself is not a 3D game.
+    pub fn launch_system_program(&self, prefix: &Prefix, program_path: &PathBuf) -> Result<u32> {
+        self.launch_program_internal(prefix, program_path, false, &[])
+    }
+
+    pub fn launch_system_program_with_args(
+        &self,
+        prefix: &Prefix,
+        program_path: &PathBuf,
+        args: &[&str],
+    ) -> Result<u32> {
+        self.launch_program_internal(prefix, program_path, false, args)
+    }
+
+    fn launch_program_internal(
+        &self,
+        prefix: &Prefix,
+        program_path: &PathBuf,
+        validate_graphics: bool,
+        args: &[&str],
+    ) -> Result<u32> {
+        self.validate_launch_environment(prefix, validate_graphics)?;
         let request = prefix.program_request(program_path.clone())?;
         let program_path = &request.executable;
         let mut env = Self::build_env(prefix, &prefix.config, &self.backend);
@@ -785,20 +825,28 @@ impl WineRunner {
         } else {
             cmd.arg(&unix_path);
         }
+        cmd.args(args);
         for (key, value) in &env {
             cmd.env(key, value);
         }
 
-        // spawn() returns immediately, child runs independently
-        let child = cmd.spawn().map_err(|e| MoonshineError::Io(e))?;
-        let pid = child.id();
-        tracing::debug!(pid = pid, "Process launched");
+        let log_path = prefix.path.join("logs").join(format!("launch-{}.log", uuid::Uuid::new_v4()));
+        let process = crate::process::spawn_tracked(cmd, log_path)?;
+        tracing::debug!(pid = process.pid, "Process launched and supervised");
+        Ok(process.pid)
+    }
 
-        // Intentionally forget the child handle — process runs independently
-        // macOS will clean up when the process exits
-        std::mem::forget(child);
-
-        Ok(crate::process::ProcessLaunchResult::new(pid)?.pid)
+    fn validate_launch_environment(&self, prefix: &Prefix, validate_graphics: bool) -> Result<()> {
+        if !self.wine_bin.is_file() {
+            return Err(MoonshineError::WineNotFound(self.wine_bin.clone()));
+        }
+        if !prefix.path.is_dir() || !prefix.drive_c().is_dir() {
+            return Err(MoonshineError::PrefixCorrupt(prefix.path.display().to_string()));
+        }
+        if validate_graphics {
+            crate::graphics::validate(&prefix.config, &self.backend, &self.wine_bin)?;
+        }
+        Ok(())
     }
 
     pub fn init_prefix(&self, prefix: &Prefix) -> Result<Output> {
@@ -1160,6 +1208,14 @@ mod tests {
             WineRunner::detect_backend_for_path(&PathBuf::from("/opt/homebrew/bin/wine64")),
             WineBackend::WineHQ
         );
+    }
+
+    #[test]
+    fn test_wine_11_version_matching_does_not_confuse_11_10() {
+        assert!(is_wine_11_0("wine-11.0"));
+        assert!(is_wine_11_0("wine-11.0.1"));
+        assert!(!is_wine_11_0("wine-11.10"));
+        assert!(!is_wine_11_0("wine-11.1"));
     }
 
     #[test]

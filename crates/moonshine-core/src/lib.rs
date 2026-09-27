@@ -2,6 +2,7 @@ pub mod config;
 pub mod downloader;
 pub mod error;
 pub mod game;
+pub mod graphics;
 pub mod installer;
 pub mod pe_parser;
 pub mod process;

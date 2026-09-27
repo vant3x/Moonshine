@@ -112,7 +112,10 @@ impl Prefix {
     }
 
     pub fn delete(&self) -> Result<()> {
-        if self.path.parent().is_none() || self.path.file_name().map(|name| name == "").unwrap_or(true) {
+        if self.path.parent().is_none()
+            || self.path.file_name().map(|name| name == "").unwrap_or(true)
+            || self.path.symlink_metadata().map(|metadata| metadata.file_type().is_symlink()).unwrap_or(false)
+        {
             return Err(MoonshineError::InvalidPath(self.path.clone()));
         }
         if self.path.exists() {
@@ -141,6 +144,9 @@ impl Prefix {
 
     pub fn backup_to(&self, backup_root: &Path) -> Result<PathBuf> {
         let backup_path = backup_root.join(&self.id);
+        if backup_root.starts_with(&self.path) || backup_path.starts_with(&self.path) {
+            return Err(MoonshineError::InvalidPath(backup_path));
+        }
         if backup_path.exists() {
             return Err(MoonshineError::PrefixAlreadyExists(backup_path.display().to_string()));
         }
@@ -149,6 +155,9 @@ impl Prefix {
     }
 
     pub fn restore_from(&self, backup_path: &Path) -> Result<()> {
+        if backup_path.starts_with(&self.path) {
+            return Err(MoonshineError::InvalidPath(backup_path.to_path_buf()));
+        }
         let restored = backup_path.join("bottle.json");
         if !restored.is_file() || !backup_path.join("drive_c").is_dir() {
             return Err(MoonshineError::PrefixCorrupt(backup_path.display().to_string()));
@@ -205,6 +214,9 @@ impl Prefix {
         {
             let path = entry.path().to_path_buf();
             if path.extension().map_or(false, |ext| ext == "exe") {
+                if is_steam_internal_executable(&path, &drive_c) {
+                    continue;
+                }
                 exes.push(path);
             }
         }
@@ -217,6 +229,13 @@ impl Prefix {
         });
 
         Ok(exes)
+    }
+
+    fn steam_install_roots(drive_c: &Path) -> [PathBuf; 2] {
+        [
+            drive_c.join("Program Files (x86)/Steam"),
+            drive_c.join("Program Files/Steam"),
+        ]
     }
 
     /// Check if Steam is installed and return its path
@@ -257,6 +276,20 @@ impl Prefix {
         }
         Ok(issues)
     }
+}
+
+fn is_steam_internal_executable(path: &Path, drive_c: &Path) -> bool {
+    let is_steam_root = Prefix::steam_install_roots(drive_c)
+        .iter()
+        .any(|root| path.starts_with(root));
+    if !is_steam_root {
+        return false;
+    }
+
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .map(|name| !name.eq_ignore_ascii_case("steam.exe"))
+        .unwrap_or(true)
 }
 
 fn validate_prefix_name(name: &str) -> Result<()> {
@@ -303,6 +336,9 @@ fn copy_tree(source: &Path, destination: &Path) -> Result<()> {
         let file_type = entry.file_type()?;
         if file_type.is_symlink() {
             let target = fs::read_link(source_path)?;
+            if target.is_absolute() || target.components().any(|component| component == std::path::Component::ParentDir) {
+                return Err(MoonshineError::InvalidPath(target));
+            }
             std::os::unix::fs::symlink(target, destination_path)?;
         } else if file_type.is_dir() {
             copy_tree(&source_path, &destination_path)?;
@@ -551,6 +587,12 @@ mod tests {
         fs::create_dir_all(prefix.drive_c().join("Games/MyGame")).unwrap();
         fs::write(prefix.drive_c().join("Games/MyGame/mygame.exe"), "").unwrap();
 
+        let steam_dir = prefix.drive_c().join("Program Files (x86)/Steam");
+        fs::create_dir_all(steam_dir.join("bin/cef")).unwrap();
+        fs::write(steam_dir.join("steam.exe"), "").unwrap();
+        fs::write(steam_dir.join("steamservice.exe"), "").unwrap();
+        fs::write(steam_dir.join("bin/cef/steamwebhelper.exe"), "").unwrap();
+
         // Launcher installed in Program Files
         fs::create_dir_all(prefix.drive_c().join("Program Files (x86)/Epic/Launcher/Portal/Binaries/Win32")).unwrap();
         fs::write(prefix.drive_c().join("Program Files (x86)/Epic/Launcher/Portal/Binaries/Win32/EpicGamesLauncher.exe"), "").unwrap();
@@ -569,6 +611,9 @@ mod tests {
         // Should find the game and launcher, but NOT system exes
         assert!(names.contains(&"mygame.exe".to_string()), "Should find game in custom dir");
         assert!(names.contains(&"EpicGamesLauncher.exe".to_string()), "Should find launcher in Program Files");
+        assert!(names.contains(&"steam.exe".to_string()), "Should retain the Steam launcher");
+        assert!(!names.contains(&"steamservice.exe".to_string()), "Should skip Steam services");
+        assert!(!names.contains(&"steamwebhelper.exe".to_string()), "Should skip Steam helpers");
         assert!(!names.contains(&"notepad.exe".to_string()), "Should skip windows/ directory");
         assert!(!names.contains(&"installer.exe".to_string()), "Should skip users/ directory");
 

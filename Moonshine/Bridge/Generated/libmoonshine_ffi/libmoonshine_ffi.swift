@@ -13,6 +13,9 @@ public func get_base_dir() -> RustString {
 public func list_all_prefixes() -> RustVec<RustPrefix> {
     RustVec(ptr: __swift_bridge__$list_all_prefixes())
 }
+public func last_prefix_error() -> RustString {
+    RustString(ptr: __swift_bridge__$last_prefix_error())
+}
 public func prefix_issues_json() -> RustString {
     RustString(ptr: __swift_bridge__$prefix_issues_json())
 }
@@ -64,6 +67,9 @@ public func has_wine_msvcrt_bug() -> Bool {
 }
 public func kill_process(_ pid: UInt32) -> Bool {
     __swift_bridge__$kill_process(pid)
+}
+public func process_state_json(_ pid: UInt32) -> RustString {
+    RustString(ptr: __swift_bridge__$process_state_json(pid))
 }
 public enum SwiftWindowsVersion {
     case Win10
@@ -616,6 +622,14 @@ extension RustPrefixRef {
         { let val = __swift_bridge__$RustPrefix$get_wine_path(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
     }
 
+    public func get_effective_wine_backend() -> RustString {
+        RustString(ptr: __swift_bridge__$RustPrefix$get_effective_wine_backend(ptr))
+    }
+
+    public func get_effective_wine_path() -> RustString {
+        RustString(ptr: __swift_bridge__$RustPrefix$get_effective_wine_path(ptr))
+    }
+
     public func get_wine_backend() -> SwiftWineBackend {
         __swift_bridge__$RustPrefix$get_wine_backend(ptr).intoSwiftRepr()
     }
@@ -626,6 +640,10 @@ extension RustPrefixRef {
 
     public func get_reduce_wine_debug() -> Bool {
         __swift_bridge__$RustPrefix$get_reduce_wine_debug(ptr)
+    }
+
+    public func graphics_diagnostics_json() -> RustString {
+        RustString(ptr: __swift_bridge__$RustPrefix$graphics_diagnostics_json(ptr))
     }
 
     public func game_profile_json<GenericToRustStr: ToRustStr>(_ program_path: GenericToRustStr) -> RustString {
@@ -682,6 +700,12 @@ extension RustPrefixRef {
         RustString(ptr: __swift_bridge__$RustPrefix$install_steam(ptr))
     }
 
+    public func install_steam_from_path<GenericToRustStr: ToRustStr>(_ setup_path: GenericToRustStr) -> RustString {
+        return setup_path.toRustStr({ setup_pathAsRustStr in
+            RustString(ptr: __swift_bridge__$RustPrefix$install_steam_from_path(ptr, setup_pathAsRustStr))
+        })
+    }
+
     public func launch_steam() -> UInt32 {
         __swift_bridge__$RustPrefix$launch_steam(ptr)
     }
@@ -700,6 +724,10 @@ extension RustPrefixRef {
 
     public func find_steam_exe() -> Optional<RustString> {
         { let val = __swift_bridge__$RustPrefix$find_steam_exe(ptr); if val != nil { return RustString(ptr: val!) } else { return nil } }()
+    }
+
+    public func discover_steam_games_json() -> RustString {
+        RustString(ptr: __swift_bridge__$RustPrefix$discover_steam_games_json(ptr))
     }
 }
 extension RustPrefix: Vectorizable {

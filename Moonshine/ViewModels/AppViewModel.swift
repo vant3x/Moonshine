@@ -13,8 +13,35 @@ struct PrefixData: Identifiable {
     let dxvkHud: Bool
     let executables: [String]
     let wineBackend: String
+    let effectiveWineBackend: String
+    let effectiveWinePath: String
     let enableHidControllers: Bool
     let reduceWineDebug: Bool
+    let graphicsDiagnostics: String
+    let steamGames: String
+
+    var graphicsMessage: String {
+        struct Diagnostics: Decodable {
+            let message: String
+        }
+        guard let data = graphicsDiagnostics.data(using: .utf8),
+              let diagnostics = try? JSONDecoder().decode(Diagnostics.self, from: data) else {
+            return graphicsDiagnostics
+        }
+        return diagnostics.message
+    }
+}
+
+private struct ProcessStatus: Decodable {
+    let pid: UInt32
+    let state: String
+    let logPath: String
+
+    enum CodingKeys: String, CodingKey {
+        case pid
+        case state
+        case logPath = "log_path"
+    }
 }
 
 @MainActor
@@ -27,6 +54,7 @@ class AppViewModel: ObservableObject {
     @Published var gptkInstalled = false
     @Published var runtimeState = "{\"runtimes\":[]}"
     @Published var prefixIssues = "[]"
+    @Published var prefixCreationError = ""
     @Published var baseDir = ""
     @Published var isDownloading = false
     @Published var downloadStatus = ""
@@ -43,6 +71,7 @@ class AppViewModel: ObservableObject {
     @Published var activeSteamPid: UInt32? = nil
     /// PIDs of other running game/program processes
     @Published var activeProcessPids: [String: UInt32] = [:] // [prefixId_exeName: pid]
+    @Published var processStates: [String: String] = [:]
 
     let defaultWineURL = "https://github.com/Gcenx/game-porting-toolkit/releases/download/Game-Porting-Toolkit-3.0-3/game-porting-toolkit-3.0-3.tar.xz"
 
@@ -165,17 +194,23 @@ class AppViewModel: ObservableObject {
                     case SwiftWineBackend.Custom: return "custom"
                     }
                 }(),
+                effectiveWineBackend: rp.get_effective_wine_backend().toString(),
+                effectiveWinePath: rp.get_effective_wine_path().toString(),
                 enableHidControllers: rp.get_hid_controllers(),
                 reduceWineDebug: rp.get_reduce_wine_debug()
+                , graphicsDiagnostics: rp.graphics_diagnostics_json().toString()
+                , steamGames: rp.discover_steam_games_json().toString()
             )
         }
     }
 
-    func createPrefix(name: String, windowsVersion: String, graphicsBackend: String) {
+    @discardableResult
+    func createPrefix(name: String, windowsVersion: String, graphicsBackend: String) -> Bool {
         guard let prefix = RustPrefix(name) else {
-            installStatus = "Could not create prefix. A valid Wine runtime is required, and the name must be unique."
-            return
+            prefixCreationError = last_prefix_error().toString()
+            return false
         }
+        prefixCreationError = ""
         prefix.set_windows_version(windowsVersion == "win10" ? .Win10 : .Win11)
         prefix.set_graphics_backend(graphicsBackend == "d3dmetal" ? .D3DMetal : .DXVK)
         _ = prefix.save()
@@ -208,6 +243,7 @@ class AppViewModel: ObservableObject {
                 }
             }
         }
+        return true
     }
 
     /// Returns a mutable reference to the prefix with the given id,
@@ -271,15 +307,40 @@ class AppViewModel: ObservableObject {
                         await MainActor.run {
                             if pid > 0 {
                                 self.activeProcessPids["\(prefixId)_\(exeName)"] = pid
-                                self.installStatus = "\(exeName) launched (PID \(pid))"
+                                self.processStates["\(prefixId)_\(exeName)"] = "running"
+                                self.installStatus = "\(exeName) launched (PID \(pid)); waiting for result..."
+                                self.monitorProcess(key: "\(prefixId)_\(exeName)", pid: pid, executableName: exeName)
                             } else {
-                                self.installStatus = "Failed to launch \(exeName)"
+                                self.installStatus = "Could not launch \(exeName). Verify the runtime, prefix, and executable path."
                             }
                         }
                         break
                     }
                 }
             }
+        }
+    }
+
+    private func monitorProcess(key: String, pid: UInt32, executableName: String) {
+        Task { [weak self] in
+            for _ in 0..<240 {
+                guard !Task.isCancelled else { return }
+                let data = process_state_json(pid).toString().data(using: .utf8)
+                if let data, let status = try? JSONDecoder().decode(ProcessStatus.self, from: data) {
+                    self?.processStates[key] = status.state
+                    if status.state.hasPrefix("exited:") || status.state.hasPrefix("failed:") || status.state == "unknown" {
+                        self?.activeProcessPids.removeValue(forKey: key)
+                        if status.state != "exited:0" {
+                            self?.installStatus = "\(executableName) ended with \(status.state). Log: \(status.logPath)"
+                        } else {
+                            self?.installStatus = "\(executableName) exited successfully. Log: \(status.logPath)"
+                        }
+                        return
+                    }
+                }
+                try? await Task.sleep(nanoseconds: 250_000_000)
+            }
+            self?.installStatus = "Stopped monitoring \(executableName); inspect the launch log if it is still running."
         }
     }
 
@@ -322,6 +383,10 @@ class AppViewModel: ObservableObject {
     }
 
     func installSteamInBackground(id: String) {
+        installSteamInBackground(id: id, setupPath: nil)
+    }
+
+    func installSteamInBackground(id: String, setupPath: String?) {
         guard !isInstalling && !isInitializing else { return }
         isInstalling = true
         installStatus = "Downloading SteamSetup.exe..."
@@ -344,7 +409,7 @@ class AppViewModel: ObservableObject {
                 }
                 return
             }
-            let result = rp.install_steam().toString()
+            let result = setupPath.map { rp.install_steam_from_path($0).toString() } ?? rp.install_steam().toString()
             await MainActor.run {
                 self.isInstalling = false
                 if result.contains("failed") || result.contains("Failed") {
@@ -373,6 +438,7 @@ class AppViewModel: ObservableObject {
                             if pid > 0 {
                                 self.activeSteamPid = pid
                                 self.installStatus = "Steam launched! (PID \(pid))"  
+                                self.monitorSteamProcess(pid: pid)
                             } else {
                                 self.installStatus = "Failed to launch Steam. Check logs."
                             }
@@ -382,6 +448,44 @@ class AppViewModel: ObservableObject {
                 }
             }
         }
+    }
+
+    private func monitorSteamProcess(pid: UInt32) {
+        Task { [weak self] in
+            for _ in 0..<240 {
+                guard !Task.isCancelled else { return }
+                let data = process_state_json(pid).toString().data(using: .utf8)
+                if let data, let status = try? JSONDecoder().decode(ProcessStatus.self, from: data) {
+                    if let failure = self?.steamLaunchFailure(in: status.logPath) {
+                        self?.activeSteamPid = nil
+                        self?.installStatus = failure
+                        return
+                    }
+                    if status.state.hasPrefix("exited:") || status.state.hasPrefix("failed:") || status.state == "unknown" {
+                        self?.activeSteamPid = nil
+                        if status.state == "exited:0" {
+                            self?.installStatus = "Steam launcher finished successfully. Steam may still be running; check its window or Dock. Log: \(status.logPath)"
+                        } else {
+                            self?.installStatus = "Steam ended with \(status.state). Log: \(status.logPath)"
+                        }
+                        return
+                    }
+                }
+                try? await Task.sleep(nanoseconds: 500_000_000)
+            }
+        }
+    }
+
+    private func steamLaunchFailure(in logPath: String) -> String? {
+        guard !logPath.isEmpty,
+              let contents = try? String(contentsOfFile: logPath, encoding: .utf8) else {
+            return nil
+        }
+
+        if contents.localizedCaseInsensitiveContains("rosetta error") {
+            return "Steam crashed in Wine/Rosetta while updating. Try closing Steam, selecting CrossOver or a native Apple Silicon GPTK runtime, then launch again. Log: \(logPath)"
+        }
+        return nil
     }
 
     func stopSteam() {

@@ -49,6 +49,9 @@ pub enum MoonshineError {
 
     #[error("Unsafe archive entry: {0}")]
     UnsafeArchiveEntry(String),
+
+    #[error("Graphics backend unavailable: {0}")]
+    GraphicsBackendUnavailable(String),
 }
 
 pub type Result<T> = std::result::Result<T, MoonshineError>;
